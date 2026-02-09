@@ -1,8 +1,8 @@
 import { 
   Container, Paper, Title, TextInput, PasswordInput, Button, Stack, Group, Switch, Text, useMantineColorScheme, useComputedColorScheme, Notification, LoadingOverlay 
 } from '@mantine/core';
-import { useState } from 'react';
-import { IconMoon, IconSun, IconCheck, IconX } from '@tabler/icons-react';
+import { useState, useEffect } from 'react'; // Added useEffect
+import { IconMoon, IconSun, IconCheck, IconX, IconDeviceFloppy } from '@tabler/icons-react';
 
 function Settings() {
   const { setColorScheme } = useMantineColorScheme();
@@ -16,14 +16,29 @@ function Settings() {
   const [clientId, setClientId] = useState('');
   const [clientSecret, setClientSecret] = useState('');
   
-  // Test Connection State
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState(null); // null | 'success' | 'error'
-  const [testMessage, setTestMessage] = useState('');
+  // Test & Save State
+  const [loading, setLoading] = useState(false);
+  const [notification, setNotification] = useState(null); // { type: 'success'|'error', message: '' }
 
+  // --- 1. LOAD SETTINGS FROM SERVER ON STARTUP ---
+  useEffect(() => {
+    fetch('http://127.0.0.1:8000/config')
+      .then(res => {
+        if (res.ok) return res.json();
+        throw new Error("Failed");
+      })
+      .then(data => {
+        if (data.tenant_id) setTenantId(data.tenant_id);
+        if (data.client_id) setClientId(data.client_id);
+        if (data.client_secret) setClientSecret(data.client_secret); // Will likely be '********'
+      })
+      .catch(err => console.log("No config found on server yet."));
+  }, []);
+
+  // --- 2. TEST CONNECTION (Sends current form data) ---
   const handleTestConnection = async () => {
-    setTesting(true);
-    setTestResult(null);
+    setLoading(true);
+    setNotification(null);
 
     try {
       const response = await fetch("http://127.0.0.1:8000/test-azure-connection", {
@@ -39,30 +54,50 @@ function Settings() {
       const data = await response.json();
 
       if (response.ok) {
-        setTestResult('success');
-        setTestMessage("Success! Connected to Azure Tenant.");
+        setNotification({ type: 'success', title: 'Connection Verified', message: "Success! Connected to Azure Tenant." });
       } else {
-        setTestResult('error');
-        setTestMessage(data.detail || "Connection failed. Check your IDs.");
+        setNotification({ type: 'error', title: 'Connection Failed', message: data.detail || "Check your IDs." });
       }
     } catch (error) {
-      setTestResult('error');
-      setTestMessage("Could not reach backend server.");
+      setNotification({ type: 'error', title: 'Network Error', message: "Could not reach backend server." });
     } finally {
-      setTesting(false);
+      setLoading(false);
     }
   };
 
-  const handleSave = () => {
-    // Save logic here (e.g. LocalStorage or Backend)
-    localStorage.setItem("azure_config", JSON.stringify({ tenantId, clientId, clientSecret }));
-    alert("Settings Saved locally!");
+  // --- 3. SAVE TO SERVER (Writes to catalogue.db) ---
+  const handleSave = async () => {
+    setLoading(true);
+    setNotification(null);
+
+    try {
+        const response = await fetch("http://127.0.0.1:8000/config", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                tenant_id: tenantId,
+                client_id: clientId,
+                client_secret: clientSecret
+            })
+        });
+
+        if (response.ok) {
+            setNotification({ type: 'success', title: 'Saved', message: "Settings saved to Server Database!" });
+        } else {
+            const err = await response.json();
+            setNotification({ type: 'error', title: 'Save Failed', message: err.detail || "Unknown error" });
+        }
+    } catch (error) {
+        setNotification({ type: 'error', title: 'Error', message: "Could not save to backend." });
+    } finally {
+        setLoading(false);
+    }
   };
 
   return (
     <Container size="sm" py="xl">
       <Paper shadow="sm" p="xl" radius="md" withBorder style={{ position: 'relative' }}>
-        <LoadingOverlay visible={testing} overlayProps={{ radius: "sm", blur: 2 }} />
+        <LoadingOverlay visible={loading} overlayProps={{ radius: "sm", blur: 2 }} />
         
         <Stack gap="lg">
           <div>
@@ -110,21 +145,21 @@ function Settings() {
             onChange={(e) => setClientSecret(e.currentTarget.value)}
           />
 
-          {/* TEST RESULT NOTIFICATION */}
-          {testResult && (
+          {/* NOTIFICATION AREA */}
+          {notification && (
             <Notification 
-              icon={testResult === 'success' ? <IconCheck size={18} /> : <IconX size={18} />}
-              color={testResult === 'success' ? 'teal' : 'red'}
-              title={testResult === 'success' ? 'Connection Verified' : 'Connection Failed'}
-              onClose={() => setTestResult(null)}
+              icon={notification.type === 'success' ? <IconCheck size={18} /> : <IconX size={18} />}
+              color={notification.type === 'success' ? 'teal' : 'red'}
+              title={notification.title}
+              onClose={() => setNotification(null)}
             >
-              {testMessage}
+              {notification.message}
             </Notification>
           )}
 
           <Group justify="space-between" mt="xl">
              <Button variant="default" onClick={handleTestConnection}>Test Connection</Button>
-             <Button onClick={handleSave} color="blue">Save Configuration</Button>
+             <Button onClick={handleSave} color="blue" leftSection={<IconDeviceFloppy size={18}/>}>Save to Server</Button>
           </Group>
 
         </Stack>
