@@ -2,10 +2,10 @@ import { useState, useEffect } from 'react';
 import Papa from 'papaparse';
 import { 
   Container, Paper, Title, Select, Button, Text, Group, Stack, 
-  TextInput, Table, ActionIcon, Grid, Badge, ScrollArea, Loader, Modal // <--- Added Modal
+  TextInput, Table, ActionIcon, Grid, Badge, ScrollArea, Loader, Modal, Notification
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { IconHistory, IconCloudUpload, IconCheck, IconX } from '@tabler/icons-react';
+import { IconHistory, IconCloudUpload, IconCheck, IconX, IconAlertCircle } from '@tabler/icons-react';
 
 function Generator() {
   // --- 1. STATE MANAGEMENT ---
@@ -20,6 +20,7 @@ function Generator() {
   // App Logic State
   const [deviceQueue, setDeviceQueue] = useState([]);
   const [loadingModels, setLoadingModels] = useState(false);
+  const [backendError, setBackendError] = useState(null);
   
   // Memory State for the "Recall" feature
   const [lastUsed, setLastUsed] = useState(null);
@@ -34,9 +35,14 @@ function Generator() {
   // Initial load: Get vendors
   useEffect(() => {
     fetch("http://127.0.0.1:8000/manufacturers")
-      .then(res => res.json())
-      .then(data => setManufacturers(data))
-      .catch(err => console.error("Backend offline?", err));
+      .then(res => {
+        if (!res.ok) throw new Error("Failed");
+        return res.json();
+      })
+      .then(data => {
+         if (Array.isArray(data)) setManufacturers(data);
+      })
+      .catch(err => setBackendError("Backend offline. Is uvicorn running?"));
   }, []);
 
   // Dynamic load: Get models when Manufacturer changes
@@ -46,8 +52,8 @@ function Generator() {
       fetch(`http://127.0.0.1:8000/models?manufacturer=${selectedMan}`)
         .then(res => res.json())
         .then(data => {
-          setModels(data);
-          if (selectedModel && !data.includes(selectedModel)) {
+          setModels(Array.isArray(data) ? data : []);
+          if (selectedModel && Array.isArray(data) && !data.includes(selectedModel)) {
              setSelectedModel(""); 
           }
           setLoadingModels(false);
@@ -58,12 +64,53 @@ function Generator() {
     }
   }, [selectedMan]);
 
-  // --- 3. ACTION FUNCTIONS ---
+  // --- 3. VALIDATION LOGIC (NEW) ---
+  const getSerialWarning = () => {
+    if (!serialNumber || !selectedMan) return null;
+    
+    const cleanSerial = serialNumber.trim().toUpperCase();
+    const man = selectedMan.toLowerCase();
+
+    // Dell: Service Tags are exactly 7 alphanumeric characters
+    if (man.includes("dell")) {
+        const dellRegex = /^[A-Z0-9]{7}$/;
+        if (!dellRegex.test(cleanSerial)) {
+            return "Dell Service Tags are typically 7 alphanumeric characters.";
+        }
+    }
+
+    // HP: Serials are almost always 10 alphanumeric characters
+    if (man.includes("hp") || man.includes("hewlett")) {
+        const hpRegex = /^[A-Z0-9]{10}$/;
+        if (!hpRegex.test(cleanSerial)) {
+            return "HP serials are typically 10 characters long.";
+        }
+    }
+
+    // Lenovo: Usually 8-10 characters
+    if (man.includes("lenovo")) {
+        if (cleanSerial.length < 8) {
+            return "Lenovo serials are usually at least 8 characters.";
+        }
+    }
+
+    return null;
+  };
+
+  const serialWarning = getSerialWarning();
+
+  // --- 4. ACTION FUNCTIONS ---
 
   const addDeviceToQueue = () => {
     if (!selectedMan || !selectedModel || !serialNumber) {
       alert("Please fill in all fields.");
       return;
+    }
+
+    // Check for duplicates in current queue
+    if (deviceQueue.some(d => d.serial === serialNumber.toUpperCase().trim())) {
+        alert("This serial number is already in your queue!");
+        return;
     }
 
     const newDevice = {
@@ -96,11 +143,7 @@ function Generator() {
       dev.serial
     ]);
 
-    const csv = Papa.unparse({
-      data: exportData,
-      fields: null
-    }, { header: false });
-
+    const csv = Papa.unparse({ data: exportData, fields: null }, { header: false });
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -109,39 +152,50 @@ function Generator() {
     link.click();
   };
 
-  // --- NEW: PUSH TO INTUNE LOGIC ---
+  // --- PUSH TO INTUNE LOGIC (Updated for DB Auth) ---
   const handlePushToIntune = async () => {
-    // 1. Retrieve Credentials from LocalStorage
-    const storedConfig = localStorage.getItem("azure_config");
-    if (!storedConfig) {
-      alert("Missing Azure Credentials! Please configure them in the Settings tab.");
-      return;
-    }
-    const config = JSON.parse(storedConfig);
-
-    // 2. Prepare UI
     setIsPushing(true);
     setPushResults([]);
-    open(); // Open the modal
+    open(); 
 
-    // 3. Send to Backend
     try {
       const response = await fetch("http://127.0.0.1:8000/push-to-intune", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          tenant_id: config.tenantId, // Note: frontend usually saves camelCase, backend needs snake_case
-          client_id: config.clientId,
-          client_secret: config.clientSecret,
           devices: deviceQueue
         })
       });
 
       const data = await response.json();
-      setPushResults(data.results);
+
+      if (!response.ok) {
+        // SAFETY FIX: Handle FastAPI validation errors (which are Arrays)
+        let errorMsg = "Server Error";
+        if (data.detail) {
+            errorMsg = typeof data.detail === "string" 
+                ? data.detail 
+                : JSON.stringify(data.detail); // Convert array/object to string
+        }
+
+        setPushResults([{ 
+            serial: "System", status: 'error', 
+            message: errorMsg 
+        }]);
+      } else if (data.results) {
+        setPushResults(data.results);
+      } else {
+        setPushResults([{ 
+            serial: "System", status: 'error', 
+            message: "Invalid response format" 
+        }]);
+      }
 
     } catch (error) {
-      setPushResults([{ serial: "System", status: 'error', message: 'Failed to contact backend server.' }]);
+      setPushResults([{ 
+        serial: "System", status: 'error', 
+        message: 'Failed to contact backend.' 
+      }]);
     } finally {
       setIsPushing(false);
     }
@@ -155,7 +209,7 @@ function Generator() {
     });
   };
 
-  // --- 4. THE UI ---
+  // --- 5. THE UI ---
   return (
     <Container size="xl" py="xl">
       <Stack gap="lg">
@@ -167,6 +221,11 @@ function Generator() {
               <Title order={2} c="blue">Intune Standardizer</Title>
               <Text c="dimmed" size="sm">Corporate Device Identifier Portal</Text>
             </div>
+            {backendError && (
+                <Badge color="red" size="lg" leftSection={<IconAlertCircle size={14}/>}>
+                    {backendError}
+                </Badge>
+            )}
           </Group>
         </Paper>
 
@@ -204,6 +263,11 @@ function Generator() {
                   placeholder="e.g. 5CD1234..."
                   value={serialNumber}
                   onChange={(e) => setSerialNumber(e.currentTarget.value)}
+                  
+                  // --- Validation Prop ---
+                  error={serialWarning}
+                  // -----------------------
+                  
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') addDeviceToQueue();
                   }}
@@ -255,7 +319,6 @@ function Generator() {
                         Download CSV
                     </Button>
 
-                    {/* --- NEW PUSH BUTTON --- */}
                     <Button
                         onClick={handlePushToIntune}
                         disabled={deviceQueue.length === 0}
@@ -311,7 +374,7 @@ function Generator() {
         </Grid>
       </Stack>
 
-      {/* --- NEW RESULTS MODAL --- */}
+      {/* --- RESULTS MODAL --- */}
       <Modal opened={opened} onClose={close} title="Intune Upload Status" size="lg" centered>
         <Stack>
           {isPushing && (
@@ -325,7 +388,6 @@ function Generator() {
             <Text c="dimmed" size="sm">Initializing upload...</Text>
           )}
 
-          {/* Only show table if we have results */}
           {pushResults.length > 0 && (
             <ScrollArea h={300} offsetScrollbars>
               <Table striped highlightOnHover>
