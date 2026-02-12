@@ -30,7 +30,7 @@ Quick Start (Portainer)
 
     Build method: Repository.
 
-    Repository URL: https://github.com/YOUR_USERNAME/YOUR_REPO_NAME.git
+    Repository URL: https://github.com/ankr98/Intune-DeviceIDApp
 
     Reference: refs/heads/main
 
@@ -41,7 +41,7 @@ Manual Deployment (CLI)
 Bash
 
 # Clone the repository
-git clone https://github.com/YOUR_USERNAME/YOUR_REPO_NAME.git
+git clone https://github.com/ankr98/Intune-DeviceIDApp.git
 cd YOUR_REPO_NAME
 
 # Start the stack (Detached mode)
@@ -122,4 +122,5 @@ Common Issues
     This is mapped to the Docker Volume app_data.
 
     Backup: You can back up this volume to save the catalogue.db (Model cache) and settings (Azure Credentials).
+
 
