@@ -5,6 +5,7 @@ import {
 } from '@mantine/core';
 import { useState, useEffect } from 'react';
 import { IconMoon, IconSun, IconCheck, IconX, IconDeviceFloppy, IconServer } from '@tabler/icons-react';
+import { API_URL } from '../config';
 
 // --- CUSTOM STYLES FOR SMOOTH THEME TRANSITION ---
 const transitionStyles = `
@@ -36,7 +37,7 @@ function Settings() {
 
   // --- 1. LOAD FROM SERVER ---
   useEffect(() => {
-    fetch('http://127.0.0.1:8000/config')
+    fetch(`${API_URL}/config`)
       .then(res => {
         if (res.ok) return res.json();
         throw new Error("Failed");
@@ -55,7 +56,7 @@ function Settings() {
     setNotification(null);
 
     try {
-      const response = await fetch("http://127.0.0.1:8000/test-azure-connection", {
+      const response = await fetch(`${API_URL}/test-azure-connection`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -85,7 +86,7 @@ function Settings() {
     setNotification(null);
 
     try {
-        const response = await fetch("http://127.0.0.1:8000/config", {
+        const response = await fetch(`${API_URL}/config`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({

@@ -6,6 +6,7 @@ import {
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { IconHistory, IconCloudUpload, IconCheck, IconX, IconAlertCircle, IconDeviceDesktop } from '@tabler/icons-react';
+import { API_URL } from '../config';
 
 // --- CUSTOM ANIMATION STYLES ---
 const customStyles = `
@@ -52,7 +53,7 @@ function Generator() {
 
   // --- DATA FETCHING ---
   useEffect(() => {
-    fetch("http://127.0.0.1:8000/manufacturers")
+    fetch(`${API_URL}/manufacturers`)
       .then(res => {
         if (!res.ok) throw new Error("Failed");
         return res.json();
@@ -66,7 +67,7 @@ function Generator() {
   useEffect(() => {
     if (selectedMan) {
       setLoadingModels(true);
-      fetch(`http://127.0.0.1:8000/models?manufacturer=${selectedMan}`)
+      fetch(`${API_URL}/models?manufacturer=${selectedMan}`)
         .then(res => res.json())
         .then(data => {
           setModels(Array.isArray(data) ? data : []);
@@ -150,7 +151,7 @@ function Generator() {
     setPushResults([]);
     open(); 
     try {
-      const response = await fetch("http://127.0.0.1:8000/push-to-intune", {
+      const response = await fetch(`${API_URL}/push-to-intune`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ devices: deviceQueue })
@@ -190,29 +191,11 @@ function Generator() {
 
       <Stack gap="lg">
         
-        {/* HEADER */}
-        <Paper shadow="sm" p="xl" radius="lg" withBorder className="hover-scale">
-          <Group justify="space-between">
-            <Group>
-                <IconDeviceDesktop size={32} style={{ color: '#228be6' }} />
-                <div>
-                <Title 
-                    order={2} 
-                    variant="gradient" 
-                    gradient={{ from: 'blue', to: 'cyan', deg: 90 }}
-                >
-                    Intune Standardizer
-                </Title>
-                <Text c="dimmed" size="sm">Corporate Device Identifier Portal</Text>
-                </div>
-            </Group>
-            {backendError && (
-                <Badge color="red" size="lg" variant="filled" leftSection={<IconAlertCircle size={14}/>}>
-                    {backendError}
-                </Badge>
-            )}
-          </Group>
-        </Paper>
+        {backendError && (
+          <Badge color="red" size="lg" variant="filled" leftSection={<IconAlertCircle size={14}/>}>
+              {backendError}
+          </Badge>
+        )}
 
         <Grid gutter="lg">
           
