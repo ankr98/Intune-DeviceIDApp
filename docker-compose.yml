@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  backend:
+    container_name: intune_backend
+    build: ./Backend
+    restart: unless-stopped
+    # PORTS REMOVED: No need to expose 8000 to the host anymore. 
+    # Only the frontend needs to talk to it internally.
+    expose:
+      - "8000"
+    volumes:
+      - app_data:/app/data
+    environment:
+      - PYTHONUNBUFFERED=1
+    networks:
+      - intune_net
+
+  frontend:
+    container_name: intune_frontend
+    build: ./Frontend
+    restart: unless-stopped
+    ports:
+      # This is the ONLY port you open. 
+      # The Sysadmin points their Reverse Proxy (Nginx/HAProxy) to this port.
+      - "8090:80"
+    depends_on:
+      - backend
+    networks:
+      - intune_net
+
+networks:
+  intune_net:
+    driver: bridge
+
+volumes:
+  app_data:
