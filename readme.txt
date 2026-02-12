@@ -26,7 +26,7 @@ Quick Start (Portainer)
 
     Go to Stacks > Add stack.
 
-    Name: intune-device-app.
+    Name: intune-deviceid-app.
 
     Build method: Repository.
 
@@ -42,7 +42,7 @@ Bash
 
 # Clone the repository
 git clone https://github.com/ankr98/Intune-DeviceIDApp.git
-cd YOUR_REPO_NAME
+cd Intune-DeviceIDApp
 
 # Start the stack (Detached mode)
 docker-compose up -d
@@ -122,5 +122,6 @@ Common Issues
     This is mapped to the Docker Volume app_data.
 
     Backup: You can back up this volume to save the catalogue.db (Model cache) and settings (Azure Credentials).
+
 
 
