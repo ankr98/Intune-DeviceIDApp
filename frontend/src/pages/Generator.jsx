@@ -2,99 +2,123 @@ import { useState, useEffect } from 'react';
 import Papa from 'papaparse';
 import { 
   Container, Paper, Title, Select, Button, Text, Group, Stack, 
-  TextInput, Table, ActionIcon, Grid, Badge, ScrollArea, Loader, Modal, Notification
+  TextInput, Table, ActionIcon, Grid, Badge, ScrollArea, Loader, Modal, Transition
 } from '@mantine/core';
-import { useDisclosure } from '@mantine/hooks'; 
-import { IconHistory, IconCloudUpload, IconCheck, IconX, IconAlertCircle } from '@tabler/icons-react'; 
+import { useDisclosure } from '@mantine/hooks';
+import { IconHistory, IconCloudUpload, IconCheck, IconX, IconAlertCircle, IconDeviceDesktop } from '@tabler/icons-react';
+import { API_URL } from '../config';
+
+// --- CUSTOM ANIMATION STYLES ---
+const customStyles = `
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateX(-20px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+  @keyframes popIn {
+    from { opacity: 0; transform: scale(0.8); }
+    to { opacity: 1; transform: scale(1); }
+  }
+  .animate-row {
+    animation: slideIn 0.3s ease-out forwards;
+  }
+  .hover-scale {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+  .hover-scale:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 15px rgba(0, 0, 0, 0.1);
+  }
+  .btn-bounce:active {
+    transform: scale(0.95);
+  }
+`;
 
 function Generator() {
-  // --- 1. STATE MANAGEMENT ---
+  // --- STATE ---
   const [manufacturers, setManufacturers] = useState([]);
   const [models, setModels] = useState([]);
   
-  // Selection State
   const [selectedMan, setSelectedMan] = useState("");
   const [selectedModel, setSelectedModel] = useState("");
   const [serialNumber, setSerialNumber] = useState("");
   
-  // App Logic State
   const [deviceQueue, setDeviceQueue] = useState([]);
   const [loadingModels, setLoadingModels] = useState(false);
-  const [backendError, setBackendError] = useState(null); // <--- New Safety State
+  const [backendError, setBackendError] = useState(null);
   
-  // Memory State for the "Recall" feature
   const [lastUsed, setLastUsed] = useState(null);
-
-  // --- STATE FOR PUSH MODAL ---
   const [opened, { open, close }] = useDisclosure(false);
   const [pushResults, setPushResults] = useState([]);
   const [isPushing, setIsPushing] = useState(false);
 
-  // --- 2. DATA FETCHING ---
-  
-  // Initial load: Get vendors
+  // --- DATA FETCHING ---
   useEffect(() => {
-    fetch("http://127.0.0.1:8000/manufacturers")
+    fetch(`${API_URL}/manufacturers`)
       .then(res => {
-        if (!res.ok) throw new Error("Failed to fetch manufacturers");
+        if (!res.ok) throw new Error("Failed");
         return res.json();
       })
       .then(data => {
-        // SAFETY CHECK: Ensure data is actually an array
-        if (Array.isArray(data)) {
-            setManufacturers(data);
-            setBackendError(null);
-        } else {
-            console.error("Backend sent invalid data:", data);
-            setBackendError("Backend sent invalid data format.");
-        }
+         if (Array.isArray(data)) setManufacturers(data);
       })
-      .catch(err => {
-        console.error("Backend offline?", err);
-        setBackendError("Cannot connect to Backend Server. Is it running?");
-      });
+      .catch(err => setBackendError("Backend offline. Is uvicorn running?"));
   }, []);
 
-  // Dynamic load: Get models when Manufacturer changes
   useEffect(() => {
     if (selectedMan) {
       setLoadingModels(true);
-      fetch(`http://127.0.0.1:8000/models?manufacturer=${selectedMan}`)
+      fetch(`${API_URL}/models?manufacturer=${selectedMan}`)
         .then(res => res.json())
         .then(data => {
-          if (Array.isArray(data)) {
-             setModels(data);
-             if (selectedModel && !data.includes(selectedModel)) {
-                setSelectedModel(""); 
-             }
-          } else {
-             setModels([]);
+          setModels(Array.isArray(data) ? data : []);
+          if (selectedModel && Array.isArray(data) && !data.includes(selectedModel)) {
+             setSelectedModel(""); 
           }
           setLoadingModels(false);
         })
-        .catch(() => {
-            setModels([]);
-            setLoadingModels(false);
-        });
+        .catch(() => setLoadingModels(false));
     } else {
       setModels([]);
     }
   }, [selectedMan]);
 
-  // --- 3. ACTION FUNCTIONS ---
+  // --- VALIDATION ---
+  const getSerialWarning = () => {
+    if (!serialNumber || !selectedMan) return null;
+    const cleanSerial = serialNumber.trim().toUpperCase();
+    const man = selectedMan.toLowerCase();
 
+    if (man.includes("dell")) {
+        const dellRegex = /^[A-Z0-9]{7}$/;
+        if (!dellRegex.test(cleanSerial)) return "Dell Service Tags are typically 7 alphanumeric characters.";
+    }
+    if (man.includes("hp") || man.includes("hewlett")) {
+        const hpRegex = /^[A-Z0-9]{10}$/;
+        if (!hpRegex.test(cleanSerial)) return "HP serials are typically 10 characters long.";
+    }
+    if (man.includes("lenovo")) {
+        if (cleanSerial.length < 8) return "Lenovo serials are usually at least 8 characters.";
+    }
+    return null;
+  };
+  const serialWarning = getSerialWarning();
+
+  // --- ACTIONS ---
   const addDeviceToQueue = () => {
     if (!selectedMan || !selectedModel || !serialNumber) {
+      // Just shake the UI or focus, but for now standard alert
       alert("Please fill in all fields.");
       return;
     }
-
+    if (deviceQueue.some(d => d.serial === serialNumber.toUpperCase().trim())) {
+        alert("This serial number is already in your queue!");
+        return;
+    }
     const newDevice = {
       manufacturer: selectedMan,
       model: selectedModel,
       serial: serialNumber.toUpperCase().trim()
     };
-
     setDeviceQueue([...deviceQueue, newDevice]);
     setLastUsed({ manufacturer: selectedMan, model: selectedModel });
     setSerialNumber(""); 
@@ -112,18 +136,8 @@ function Generator() {
 
   const exportToCSV = () => {
     if (deviceQueue.length === 0) return;
-
-    const exportData = deviceQueue.map(dev => [
-      dev.manufacturer,
-      dev.model,
-      dev.serial
-    ]);
-
-    const csv = Papa.unparse({
-      data: exportData,
-      fields: null
-    }, { header: false });
-
+    const exportData = deviceQueue.map(dev => [dev.manufacturer, dev.model, dev.serial]);
+    const csv = Papa.unparse({ data: exportData, fields: null }, { header: false });
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -132,42 +146,31 @@ function Generator() {
     link.click();
   };
 
-  // --- PUSH TO INTUNE LOGIC (CRASH PROOF) ---
   const handlePushToIntune = async () => {
     setIsPushing(true);
     setPushResults([]);
     open(); 
-
     try {
-      const response = await fetch("http://127.0.0.1:8000/push-to-intune", {
+      const response = await fetch(`${API_URL}/push-to-intune`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          devices: deviceQueue
-        })
+        body: JSON.stringify({ devices: deviceQueue })
       });
-
       const data = await response.json();
 
       if (!response.ok) {
-        setPushResults([{ 
-            serial: "System", status: 'error', 
-            message: data.detail || "Server Error" 
-        }]);
+        let errorMsg = "Server Error";
+        if (data.detail) {
+            errorMsg = typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail);
+        }
+        setPushResults([{ serial: "System", status: 'error', message: errorMsg }]);
       } else if (data.results) {
         setPushResults(data.results);
       } else {
-        setPushResults([{ 
-            serial: "System", status: 'error', 
-            message: "Invalid response format" 
-        }]);
+        setPushResults([{ serial: "System", status: 'error', message: "Invalid response format" }]);
       }
-
     } catch (error) {
-      setPushResults([{ 
-        serial: "System", status: 'error', 
-        message: 'Failed to contact backend.' 
-      }]);
+      setPushResults([{ serial: "System", status: 'error', message: 'Failed to contact backend.' }]);
     } finally {
       setIsPushing(false);
     }
@@ -181,32 +184,25 @@ function Generator() {
     });
   };
 
-  // --- 4. THE UI ---
+  // --- UI RENDER ---
   return (
     <Container size="xl" py="xl">
+      <style>{customStyles}</style>
+
       <Stack gap="lg">
         
-        {/* HEADER */}
-        <Paper shadow="xs" p="xl" radius="md" withBorder>
-          <Group justify="space-between">
-            <div>
-              <Title order={2} c="blue">Intune Standardizer</Title>
-              <Text c="dimmed" size="sm">Corporate Device Identifier Portal</Text>
-            </div>
-            {backendError && (
-                <Badge color="red" size="lg" leftSection={<IconAlertCircle size={14}/>}>
-                    {backendError}
-                </Badge>
-            )}
-          </Group>
-        </Paper>
+        {backendError && (
+          <Badge color="red" size="lg" variant="filled" leftSection={<IconAlertCircle size={14}/>}>
+              {backendError}
+          </Badge>
+        )}
 
         <Grid gutter="lg">
           
           {/* LEFT COLUMN: INPUT FORM */}
           <Grid.Col span={{ base: 12, md: 4 }}>
-            <Paper shadow="sm" p="lg" radius="md" withBorder>
-              <Title order={4} mb="md">Add Device</Title>
+            <Paper shadow="sm" p="lg" radius="lg" withBorder h="100%">
+              <Title order={4} mb="md" c="gray.7">Add Device</Title>
               
               <Stack gap="md">
                 <Select
@@ -216,7 +212,8 @@ function Generator() {
                   value={selectedMan}
                   onChange={setSelectedMan}
                   searchable
-                  disabled={manufacturers.length === 0}
+                  variant="filled"
+                  radius="md"
                 />
 
                 <Select
@@ -229,6 +226,8 @@ function Generator() {
                   searchable
                   filter={optionsFilter}
                   rightSection={loadingModels ? <Loader size="xs" /> : null}
+                  variant="filled"
+                  radius="md"
                 />
 
                 <TextInput
@@ -236,6 +235,9 @@ function Generator() {
                   placeholder="e.g. 5CD1234..."
                   value={serialNumber}
                   onChange={(e) => setSerialNumber(e.currentTarget.value)}
+                  error={serialWarning}
+                  variant="filled"
+                  radius="md"
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') addDeviceToQueue();
                   }}
@@ -245,8 +247,12 @@ function Generator() {
                   onClick={addDeviceToQueue} 
                   fullWidth 
                   mt="sm"
+                  size="md"
+                  radius="md"
+                  className="btn-bounce"
                   variant="gradient" 
                   gradient={{ from: 'blue', to: 'cyan', deg: 90 }}
+                  style={{ transition: 'transform 0.1s' }}
                 >
                   Add to Queue
                 </Button>
@@ -257,10 +263,12 @@ function Generator() {
                     color="gray" 
                     fullWidth 
                     size="xs"
+                    radius="md"
+                    className="btn-bounce"
                     leftSection={<IconHistory size={14} />}
                     onClick={recallLastUsed}
                   >
-                    Load Previous: {lastUsed.model}
+                    Quick Load: {lastUsed.model}
                   </Button>
                 )}
 
@@ -270,11 +278,18 @@ function Generator() {
 
           {/* RIGHT COLUMN: QUEUE TABLE */}
           <Grid.Col span={{ base: 12, md: 8 }}>
-            <Paper shadow="sm" p="lg" radius="md" withBorder>
+            <Paper shadow="sm" p="lg" radius="lg" withBorder h="100%">
               <Group justify="space-between" mb="md">
                 <Group gap="xs">
-                  <Title order={4}>Registration Queue</Title>
-                  <Badge color="gray" variant="light" size="lg">{deviceQueue.length}</Badge>
+                  <Title order={4} c="gray.7">Queue</Title>
+                  <Badge 
+                    circle 
+                    size="lg" 
+                    gradient={{ from: 'blue', to: 'cyan', deg: 90 }} 
+                    variant="gradient"
+                  >
+                    {deviceQueue.length}
+                  </Badge>
                 </Group>
                 
                 <Group gap="xs">
@@ -283,14 +298,18 @@ function Generator() {
                         disabled={deviceQueue.length === 0}
                         color="green"
                         variant="light"
+                        radius="md"
+                        className="btn-bounce"
                     >
-                        Download CSV
+                        CSV
                     </Button>
 
                     <Button
                         onClick={handlePushToIntune}
                         disabled={deviceQueue.length === 0}
                         color="blue"
+                        radius="md"
+                        className="btn-bounce"
                         leftSection={<IconCloudUpload size={18} />}
                     >
                         Push to Intune
@@ -298,8 +317,8 @@ function Generator() {
                 </Group>
               </Group>
 
-              <ScrollArea h={400} type="auto">
-                <Table striped highlightOnHover verticalSpacing="sm">
+              <ScrollArea h={400} type="auto" offsetScrollbars>
+                <Table striped highlightOnHover verticalSpacing="sm" withRowBorders={false}>
                   <Table.Thead>
                     <Table.Tr>
                       <Table.Th>Manufacturer</Table.Th>
@@ -312,21 +331,28 @@ function Generator() {
                     {deviceQueue.length === 0 ? (
                       <Table.Tr>
                         <Table.Td colSpan={4}>
-                          <Text c="dimmed" ta="center" py="xl">
-                            Queue is empty. Add a device to start.
-                          </Text>
+                          <Stack align="center" py="xl" gap="xs" c="dimmed" style={{ opacity: 0.5 }}>
+                            <IconDeviceDesktop size={48} stroke={1.5} />
+                            <Text size="sm">Queue is empty. Ready for input.</Text>
+                          </Stack>
                         </Table.Td>
                       </Table.Tr>
                     ) : (
                       deviceQueue.map((device, index) => (
-                        <Table.Tr key={index}>
+                        <Table.Tr key={index} className="animate-row" style={{ animationDelay: `${index * 0.05}s` }}>
                           <Table.Td>{device.manufacturer}</Table.Td>
                           <Table.Td>{device.model}</Table.Td>
-                          <Table.Td style={{ fontFamily: 'monospace', fontWeight: 'bold', color: '#4dabf7' }}>
+                          <Table.Td style={{ fontFamily: 'monospace', fontWeight: 'bold', color: '#228be6' }}>
                             {device.serial}
                           </Table.Td>
                           <Table.Td style={{ textAlign: 'right' }}>
-                            <ActionIcon color="red" variant="subtle" onClick={() => removeDevice(index)}>
+                            <ActionIcon 
+                                color="red" 
+                                variant="subtle" 
+                                radius="xl"
+                                onClick={() => removeDevice(index)}
+                                className="btn-bounce"
+                            >
                               ✕
                             </ActionIcon>
                           </Table.Td>
@@ -343,13 +369,21 @@ function Generator() {
       </Stack>
 
       {/* --- RESULTS MODAL --- */}
-      <Modal opened={opened} onClose={close} title="Intune Upload Status" size="lg" centered>
+      <Modal 
+        opened={opened} 
+        onClose={close} 
+        title={<Text fw={700} c="blue">Intune Sync Status</Text>} 
+        size="lg" 
+        centered
+        radius="lg"
+        overlayProps={{ backgroundOpacity: 0.55, blur: 3 }}
+      >
         <Stack>
           {isPushing && (
-             <Group justify="center" py="xl">
-                <Loader size="md" type="dots" />
-                <Text size="sm" c="dimmed">Registering devices with Microsoft Graph...</Text>
-             </Group>
+             <Stack align="center" py="xl">
+                <Loader size="lg" type="dots" color="blue" />
+                <Text size="sm" c="dimmed" fs="italic">Syncing with Microsoft Graph...</Text>
+             </Stack>
           )}
           
           {!isPushing && pushResults.length === 0 && (
@@ -358,21 +392,21 @@ function Generator() {
 
           {pushResults.length > 0 && (
             <ScrollArea h={300} offsetScrollbars>
-              <Table striped highlightOnHover>
+              <Table verticalSpacing="xs">
                 <Table.Thead>
                   <Table.Tr>
-                    <Table.Th>Serial</Table.Th>
+                    <Table.Th>Device</Table.Th>
                     <Table.Th>Status</Table.Th>
                     <Table.Th>Details</Table.Th>
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
                   {pushResults.map((res, index) => (
-                    <Table.Tr key={index}>
-                      <Table.Td fw={500} style={{ fontFamily: 'monospace' }}>{res.serial || "N/A"}</Table.Td>
+                    <Table.Tr key={index} style={{ animation: 'popIn 0.3s ease-out forwards', animationDelay: `${index * 0.05}s` }}>
+                      <Table.Td fw={600} style={{ fontFamily: 'monospace' }}>{res.serial || "N/A"}</Table.Td>
                       <Table.Td>
                         {res.status === 'success' ? (
-                          <Badge color="green" variant="light" leftSection={<IconCheck size={12}/>}>Success</Badge>
+                          <Badge color="teal" variant="light" leftSection={<IconCheck size={12}/>}>Success</Badge>
                         ) : (
                           <Badge color="red" variant="light" leftSection={<IconX size={12}/>}>Failed</Badge>
                         )}
@@ -388,7 +422,9 @@ function Generator() {
           )}
           
           {!isPushing && (
-             <Button fullWidth onClick={close} variant="default">Close</Button>
+             <Button fullWidth onClick={close} variant="light" color="gray" radius="md">
+                Close Report
+             </Button>
           )}
         </Stack>
       </Modal>

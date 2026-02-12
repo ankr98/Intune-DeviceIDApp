@@ -2,10 +2,13 @@ import sqlite3
 import os
 import msal
 import requests
+import asyncio
+import sync_service  # Importing your scraper logic
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 app = FastAPI()
 
@@ -18,7 +21,12 @@ app.add_middleware(
 )
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_FILE = os.path.join(BASE_DIR, "catalogue.db")
+
+# Database lives in a 'data' subfolder for Docker volume mapping
+DATA_DIR = os.path.join(BASE_DIR, "data")
+os.makedirs(DATA_DIR, exist_ok=True) 
+
+DB_FILE = os.path.join(DATA_DIR, "catalogue.db")
 
 # --- DATA MODELS ---
 class AzureConfig(BaseModel):
@@ -40,8 +48,24 @@ def get_db_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
+# --- SYNC ENGINE ---
+async def sync_device_catalogue():
+    """
+    Wraps the blocking sync_service.run_sync_all() in a thread 
+    so it does not freeze the API during download/extraction.
+    """
+    print("[SYNC] Triggering background device catalogue update...")
+    try:
+        loop = asyncio.get_event_loop()
+        # Run the heavy blocking function in a separate thread
+        await loop.run_in_executor(None, sync_service.run_sync_all)
+        print("[SYNC] Background update process finished.")
+    except Exception as e:
+        print(f"[SYNC] FAILED: {e}")
+
 @app.on_event("startup")
-def startup():
+async def startup():
+    # 1. Database Initialization
     conn = get_db_connection()
     try:
         # Create Hardware Table
@@ -61,10 +85,27 @@ def startup():
             )
         ''')
         conn.commit()
+
+        # 2. Check for Fresh Install
+        # We check if the models table is empty.
+        table_check = conn.execute("SELECT count(*) FROM models").fetchone()[0]
+        
+        if table_check == 0:
+            print("[INSTALL] Database is empty. Running initial build...")
+            await sync_device_catalogue()
+        else:
+            print(f"[READY] Database loaded with {table_check} devices.")
+
     finally:
         conn.close()
 
-# --- INTERNAL HELPERS (Must be above endpoints that use them) ---
+    # 3. Start Scheduler (Runs every 24 hours)
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(sync_device_catalogue, 'interval', hours=24)
+    scheduler.start()
+    print("[SCHEDULER] Background sync set for every 24 hours.")
+
+# --- INTERNAL HELPERS ---
 
 def get_azure_credentials():
     """Internal helper to fetch credentials from the local database."""
@@ -73,28 +114,21 @@ def get_azure_credentials():
         rows = conn.execute("SELECT key, value FROM settings").fetchall()
         config = {row["key"]: row["value"] for row in rows}
         
-        # --- DEBUG LOGGING ---
-        # This will print to your VS Code terminal so you can see what is saved
-        print(f"DEBUG: Reading DB Settings. Keys found: {list(config.keys())}")
-        # ---------------------
-
-        # Check if we have the required keys
         required = ["tenant_id", "client_id", "client_secret"]
         missing = [k for k in required if k not in config]
         
         if missing:
-            print(f"DEBUG: Missing keys: {missing}")
+            print(f"[DEBUG] Missing keys: {missing}")
             raise HTTPException(status_code=400, detail=f"Azure config missing: {', '.join(missing)}")
             
         return config
     finally:
         conn.close()
 
-# --- CONFIG / SETTINGS ENDPOINTS ---
+# --- API ENDPOINTS ---
 
 @app.get("/config")
 def get_config():
-    """Retrieves saved config (masks secret for UI)."""
     conn = get_db_connection()
     try:
         rows = conn.execute("SELECT key, value FROM settings").fetchall()
@@ -106,37 +140,22 @@ def get_config():
         conn.close()
 
 @app.post("/config")
-@app.post("/config")
 def save_config(config: AzureConfig):
-    """Saves Azure credentials to the local SQLite database."""
-    print(f"DEBUG: SAVE RECEIVED -> Tenant: {config.tenant_id}, Client: {config.client_id}")
-    
     conn = get_db_connection()
     try:
         conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('tenant_id', ?)", (config.tenant_id,))
         conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('client_id', ?)", (config.client_id,))
         
-        # Logic to handle the masked secret
-        if config.client_secret and config.client_secret != "********":
+        if config.client_secret != "********":
             conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('client_secret', ?)", (config.client_secret,))
-            print("DEBUG: Client Secret Saved to DB")
+            print("[DEBUG] Client Secret updated in Database")
         else:
-            print("DEBUG: Client Secret was masked, skipping save.")
+            print("[DEBUG] Client Secret masked, skipping update.")
             
         conn.commit()
-        
-        # IMMEDIATE VERIFICATION
-        check = conn.execute("SELECT count(*) FROM settings").fetchone()[0]
-        print(f"DEBUG: Total rows in settings table now: {check}")
-        
         return {"status": "success"}
-    except Exception as e:
-        print(f"DEBUG: Save Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
     finally:
         conn.close()
-
-# --- HARDWARE ENDPOINTS ---
 
 @app.get("/manufacturers")
 def get_manufacturers():
@@ -159,11 +178,8 @@ def get_models(manufacturer: str = Query(...)):
     finally:
         conn.close()
 
-# --- INTUNE / GRAPH ENDPOINTS ---
-
 @app.post("/test-azure-connection")
 def test_azure_connection(config_in: Optional[AzureConfig] = None):
-    """Tests connection using provided config OR saved DB config."""
     try:
         if config_in and config_in.client_secret != "********":
             creds = config_in.dict()
@@ -190,6 +206,7 @@ def push_to_intune(data: PushRequest):
     Pushes devices using the 'manufacturerModelSerial' composite key required for Windows.
     """
     creds = get_azure_credentials()
+    
     authority_url = f"https://login.microsoftonline.com/{creds['tenant_id']}"
     
     try:
@@ -212,25 +229,16 @@ def push_to_intune(data: PushRequest):
 
     identities_list = []
     for device in data.devices:
-        # 1. Clean the data (Strip whitespace)
         man = device.manufacturer.strip()
         mod = device.model.strip()
         ser = device.serial.strip().upper()
 
-        # 2. Construct the Composite Key (Comma Separated)
-        # Format: "Manufacturer,Model,SerialNumber"
         composite_id = f"{man},{mod},{ser}"
 
         identities_list.append({
-            # The Magic Header
             "@odata.type": "#microsoft.graph.importedDeviceIdentity",
-            
-            # The Composite String
             "importedDeviceIdentifier": composite_id,
-            
-            # The Correct Windows Type
             "importedDeviceIdentityType": "manufacturerModelSerial",
-            
             "description": f"Added via App: {man} {mod}",
             "platform": "windows"
         })

@@ -183,4 +183,5 @@ cython_debug/
 # --- MY CUSTOM ADDS ---
 catalogue.db
 *.db
-backend/catalogue.db
+Backend/data
+*.sqlite3

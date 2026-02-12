@@ -18,7 +18,7 @@ function AppShell() {
             <ThemeIcon size="lg" variant="gradient" gradient={{ from: 'indigo', to: 'cyan' }}>
               ID
             </ThemeIcon>
-            <Title order={4}>Intune Helper</Title>
+            <Title order={4}>Intune Corporate Device Registration</Title>
           </Group>
 
           {/* Navigation Tabs */}
