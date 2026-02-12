@@ -1,37 +1,61 @@
 version: '3.8'
 
 services:
+  # --- BACKEND SERVICE (Python API) ---
   backend:
     container_name: intune_backend
-    build: ./Backend
+    build:
+      context: ./Backend
+      dockerfile: Dockerfile
     restart: unless-stopped
-    # PORTS REMOVED: No need to expose 8000 to the host anymore. 
-    # Only the frontend needs to talk to it internally.
+    
+    # SECURITY: Only expose port 8000 internally to the Docker network.
+    # The host machine cannot access this directly, only the frontend can.
     expose:
       - "8000"
+      
     volumes:
       - app_data:/app/data
     environment:
       - PYTHONUNBUFFERED=1
     networks:
       - intune_net
+      
+    # HEALTHCHECK: Pings the API every 10s to see if it's ready.
+    # The frontend will NOT start until this passes.
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/docs"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s # Gives the heavy sync script time to run first
 
+  # --- FRONTEND SERVICE (React + Nginx) ---
   frontend:
     container_name: intune_frontend
-    build: ./Frontend
+    build:
+      context: ./Frontend
+      dockerfile: Dockerfile
     restart: unless-stopped
+    
+    # ACCESS: This is the ONLY port exposed to your network.
+    # Point your Reverse Proxy / Load Balancer here (e.g., http://10.10.10.10:8090)
     ports:
-      # This is the ONLY port you open. 
-      # The Sysadmin points their Reverse Proxy (Nginx/HAProxy) to this port.
       - "8090:80"
+      
+    # DEPENDENCY: Waits for backend to be "Healthy" (not just running)
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+        
     networks:
       - intune_net
 
+# --- NETWORKS ---
 networks:
   intune_net:
     driver: bridge
 
+# --- VOLUMES ---
 volumes:
   app_data:
