@@ -3,29 +3,26 @@ import os
 import msal
 import requests
 import asyncio
-import sync_service  # Importing your scraper logic
+import logging
+import sync_service
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-app = FastAPI()
-
-# --- CONFIGURATION ---
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+# --- LOGGING SETUP ---
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
 )
+logger = logging.getLogger(__name__)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-# Database lives in a 'data' subfolder for Docker volume mapping
 DATA_DIR = os.path.join(BASE_DIR, "data")
-os.makedirs(DATA_DIR, exist_ok=True) 
-
+os.makedirs(DATA_DIR, exist_ok=True)
 DB_FILE = os.path.join(DATA_DIR, "catalogue.db")
 
 # --- DATA MODELS ---
@@ -46,29 +43,25 @@ class PushRequest(BaseModel):
 def get_db_connection():
     conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
     return conn
 
 # --- SYNC ENGINE ---
 async def sync_device_catalogue():
-    """
-    Wraps the blocking sync_service.run_sync_all() in a thread 
-    so it does not freeze the API during download/extraction.
-    """
-    print("[SYNC] Triggering background device catalogue update...")
+    logger.info("[SYNC] Triggering background device catalogue update...")
     try:
-        loop = asyncio.get_event_loop()
-        # Run the heavy blocking function in a separate thread
+        loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, sync_service.run_sync_all)
-        print("[SYNC] Background update process finished.")
+        logger.info("[SYNC] Background update process finished.")
     except Exception as e:
-        print(f"[SYNC] FAILED: {e}")
+        logger.error(f"[SYNC] FAILED: {e}")
 
-@app.on_event("startup")
-async def startup():
-    # 1. Database Initialization
+# --- LIFESPAN (replaces deprecated @app.on_event) ---
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # STARTUP
     conn = get_db_connection()
     try:
-        # Create Hardware Table
         conn.execute('''
             CREATE TABLE IF NOT EXISTS models (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -77,7 +70,6 @@ async def startup():
                 UNIQUE(manufacturer, model_name)
             )
         ''')
-        # Create Settings Table
         conn.execute('''
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
@@ -86,46 +78,62 @@ async def startup():
         ''')
         conn.commit()
 
-        # 2. Check for Fresh Install
-        # We check if the models table is empty.
         table_check = conn.execute("SELECT count(*) FROM models").fetchone()[0]
-        
         if table_check == 0:
-            print("[INSTALL] Database is empty. Running initial build...")
+            logger.info("[INSTALL] Database is empty. Running initial catalogue build...")
             await sync_device_catalogue()
         else:
-            print(f"[READY] Database loaded with {table_check} devices.")
-
+            logger.info(f"[READY] Database loaded with {table_check} models.")
     finally:
         conn.close()
 
-    # 3. Start Scheduler (Runs every 24 hours)
     scheduler = AsyncIOScheduler()
     scheduler.add_job(sync_device_catalogue, 'interval', hours=24)
     scheduler.start()
-    print("[SCHEDULER] Background sync set for every 24 hours.")
+    logger.info("[SCHEDULER] Background sync scheduled every 24 hours.")
+
+    yield  # Application runs here
+
+    # SHUTDOWN
+    scheduler.shutdown()
+    logger.info("[SHUTDOWN] Scheduler stopped.")
+
+app = FastAPI(lifespan=lifespan)
+
+# --- CORS ---
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # --- INTERNAL HELPERS ---
-
 def get_azure_credentials():
-    """Internal helper to fetch credentials from the local database."""
     conn = get_db_connection()
     try:
         rows = conn.execute("SELECT key, value FROM settings").fetchall()
         config = {row["key"]: row["value"] for row in rows}
-        
         required = ["tenant_id", "client_id", "client_secret"]
         missing = [k for k in required if k not in config]
-        
         if missing:
-            print(f"[DEBUG] Missing keys: {missing}")
+            logger.warning(f"[AUTH] Missing config keys: {missing}")
             raise HTTPException(status_code=400, detail=f"Azure config missing: {', '.join(missing)}")
-            
         return config
     finally:
         conn.close()
 
 # --- API ENDPOINTS ---
+
+@app.get("/health")
+def health():
+    """Dedicated health endpoint used by the Docker healthcheck."""
+    conn = get_db_connection()
+    try:
+        count = conn.execute("SELECT count(*) FROM models").fetchone()[0]
+        return {"status": "ok", "models_loaded": count}
+    finally:
+        conn.close()
 
 @app.get("/config")
 def get_config():
@@ -145,13 +153,11 @@ def save_config(config: AzureConfig):
     try:
         conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('tenant_id', ?)", (config.tenant_id,))
         conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('client_id', ?)", (config.client_id,))
-        
         if config.client_secret != "********":
             conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('client_secret', ?)", (config.client_secret,))
-            print("[DEBUG] Client Secret updated in Database")
+            logger.info("[CONFIG] Client secret updated.")
         else:
-            print("[DEBUG] Client Secret masked, skipping update.")
-            
+            logger.info("[CONFIG] Client secret unchanged (masked value received).")
         conn.commit()
         return {"status": "success"}
     finally:
@@ -171,7 +177,7 @@ def get_models(manufacturer: str = Query(...)):
     conn = get_db_connection()
     try:
         rows = conn.execute(
-            "SELECT model_name FROM models WHERE manufacturer = ? ORDER BY model_name", 
+            "SELECT model_name FROM models WHERE manufacturer = ? ORDER BY model_name",
             (manufacturer,)
         ).fetchall()
         return [row["model_name"] for row in rows]
@@ -182,7 +188,7 @@ def get_models(manufacturer: str = Query(...)):
 def test_azure_connection(config_in: Optional[AzureConfig] = None):
     try:
         if config_in and config_in.client_secret != "********":
-            creds = config_in.dict()
+            creds = config_in.model_dump()
         else:
             creds = get_azure_credentials()
 
@@ -196,19 +202,19 @@ def test_azure_connection(config_in: Optional[AzureConfig] = None):
 
         if "error" in result:
             raise HTTPException(status_code=401, detail=result.get('error_description'))
+
+        logger.info("[AUTH] Azure connection test successful.")
         return {"status": "success", "message": "Connection Successful"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/push-to-intune")
 def push_to_intune(data: PushRequest):
-    """
-    Pushes devices using the 'manufacturerModelSerial' composite key required for Windows.
-    """
     creds = get_azure_credentials()
-    
     authority_url = f"https://login.microsoftonline.com/{creds['tenant_id']}"
-    
+
     try:
         app_client = msal.ConfidentialClientApplication(
             creds['client_id'],
@@ -232,9 +238,7 @@ def push_to_intune(data: PushRequest):
         man = device.manufacturer.strip()
         mod = device.model.strip()
         ser = device.serial.strip().upper()
-
         composite_id = f"{man},{mod},{ser}"
-
         identities_list.append({
             "@odata.type": "#microsoft.graph.importedDeviceIdentity",
             "importedDeviceIdentifier": composite_id,
@@ -245,17 +249,17 @@ def push_to_intune(data: PushRequest):
 
     payload = {
         "importedDeviceIdentities": identities_list,
-        "overwriteImportedDeviceIdentities": True 
+        "overwriteImportedDeviceIdentities": True
     }
 
     url = "https://graph.microsoft.com/beta/deviceManagement/importedDeviceIdentities/importDeviceIdentityList"
-    
+
     try:
         response = requests.post(url, headers=headers, json=payload)
-        
+
         if response.status_code == 200:
             api_results = response.json().get("value", [])
-            
+            logger.info(f"[INTUNE] Pushed {len(api_results)} devices successfully.")
             return {"results": [
                 {
                     "serial": res.get("importedDeviceIdentifier", "").split(',')[-1] if ',' in res.get("importedDeviceIdentifier", "") else "Unknown",
@@ -269,4 +273,5 @@ def push_to_intune(data: PushRequest):
             raise Exception(f"Batch Failed: {main_error}")
 
     except Exception as e:
+        logger.error(f"[INTUNE] Push failed: {e}")
         return {"results": [{"serial": d.serial, "status": "error", "message": str(e)} for d in data.devices]}

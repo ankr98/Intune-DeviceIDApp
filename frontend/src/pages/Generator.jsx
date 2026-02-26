@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import Papa from 'papaparse';
-import { 
-  Container, Paper, Title, Select, Button, Text, Group, Stack, 
-  TextInput, Table, ActionIcon, Grid, Badge, ScrollArea, Loader, Modal, Transition
+import {
+  Container, Paper, Title, Select, Button, Text, Group, Stack,
+  TextInput, Table, ActionIcon, Grid, Badge, ScrollArea, Loader, Modal
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { IconHistory, IconCloudUpload, IconCheck, IconX, IconAlertCircle, IconDeviceDesktop } from '@tabler/icons-react';
@@ -37,31 +37,52 @@ function Generator() {
   // --- STATE ---
   const [manufacturers, setManufacturers] = useState([]);
   const [models, setModels] = useState([]);
-  
+
   const [selectedMan, setSelectedMan] = useState("");
   const [selectedModel, setSelectedModel] = useState("");
   const [serialNumber, setSerialNumber] = useState("");
-  
+
   const [deviceQueue, setDeviceQueue] = useState([]);
+  const [loadingManufacturers, setLoadingManufacturers] = useState(true);
   const [loadingModels, setLoadingModels] = useState(false);
   const [backendError, setBackendError] = useState(null);
-  
+
   const [lastUsed, setLastUsed] = useState(null);
+
+  // Results modal (shown after push completes)
   const [opened, { open, close }] = useDisclosure(false);
   const [pushResults, setPushResults] = useState([]);
   const [isPushing, setIsPushing] = useState(false);
 
+  // Confirmation modal (shown before push starts)
+  const [confirmOpened, { open: openConfirm, close: closeConfirm }] = useDisclosure(false);
+
+  // --- SESSIONSTORAGE: Restore queue on page load ---
+  useEffect(() => {
+    const saved = sessionStorage.getItem('deviceQueue');
+    if (saved) {
+      try { setDeviceQueue(JSON.parse(saved)); } catch (_) {}
+    }
+  }, []);
+
+  // --- SESSIONSTORAGE: Persist queue on every change ---
+  useEffect(() => {
+    sessionStorage.setItem('deviceQueue', JSON.stringify(deviceQueue));
+  }, [deviceQueue]);
+
   // --- DATA FETCHING ---
   useEffect(() => {
+    setLoadingManufacturers(true);
     fetch(`${API_URL}/manufacturers`)
       .then(res => {
         if (!res.ok) throw new Error("Failed");
         return res.json();
       })
       .then(data => {
-         if (Array.isArray(data)) setManufacturers(data);
+        if (Array.isArray(data)) setManufacturers(data);
       })
-      .catch(err => setBackendError("Backend offline. Is uvicorn running?"));
+      .catch(() => setBackendError("Backend offline. Is uvicorn running?"))
+      .finally(() => setLoadingManufacturers(false));
   }, []);
 
   useEffect(() => {
@@ -72,7 +93,7 @@ function Generator() {
         .then(data => {
           setModels(Array.isArray(data) ? data : []);
           if (selectedModel && Array.isArray(data) && !data.includes(selectedModel)) {
-             setSelectedModel(""); 
+            setSelectedModel("");
           }
           setLoadingModels(false);
         })
@@ -87,17 +108,14 @@ function Generator() {
     if (!serialNumber || !selectedMan) return null;
     const cleanSerial = serialNumber.trim().toUpperCase();
     const man = selectedMan.toLowerCase();
-
     if (man.includes("dell")) {
-        const dellRegex = /^[A-Z0-9]{7}$/;
-        if (!dellRegex.test(cleanSerial)) return "Dell Service Tags are typically 7 alphanumeric characters.";
+      if (!/^[A-Z0-9]{7}$/.test(cleanSerial)) return "Dell Service Tags are typically 7 alphanumeric characters.";
     }
     if (man.includes("hp") || man.includes("hewlett")) {
-        const hpRegex = /^[A-Z0-9]{10}$/;
-        if (!hpRegex.test(cleanSerial)) return "HP serials are typically 10 characters long.";
+      if (!/^[A-Z0-9]{10}$/.test(cleanSerial)) return "HP serials are typically 10 characters long.";
     }
     if (man.includes("lenovo")) {
-        if (cleanSerial.length < 8) return "Lenovo serials are usually at least 8 characters.";
+      if (cleanSerial.length < 8) return "Lenovo serials are usually at least 8 characters.";
     }
     return null;
   };
@@ -106,13 +124,12 @@ function Generator() {
   // --- ACTIONS ---
   const addDeviceToQueue = () => {
     if (!selectedMan || !selectedModel || !serialNumber) {
-      // Just shake the UI or focus, but for now standard alert
       alert("Please fill in all fields.");
       return;
     }
     if (deviceQueue.some(d => d.serial === serialNumber.toUpperCase().trim())) {
-        alert("This serial number is already in your queue!");
-        return;
+      alert("This serial number is already in your queue!");
+      return;
     }
     const newDevice = {
       manufacturer: selectedMan,
@@ -121,7 +138,7 @@ function Generator() {
     };
     setDeviceQueue([...deviceQueue, newDevice]);
     setLastUsed({ manufacturer: selectedMan, model: selectedModel });
-    setSerialNumber(""); 
+    setSerialNumber("");
   };
 
   const removeDevice = (indexToRemove) => {
@@ -146,10 +163,17 @@ function Generator() {
     link.click();
   };
 
-  const handlePushToIntune = async () => {
+  // Step 1: Open confirmation modal
+  const handlePushToIntune = () => {
+    openConfirm();
+  };
+
+  // Step 2: User confirmed — execute the actual push
+  const executePush = async () => {
+    closeConfirm();
     setIsPushing(true);
     setPushResults([]);
-    open(); 
+    open();
     try {
       const response = await fetch(`${API_URL}/push-to-intune`, {
         method: "POST",
@@ -159,10 +183,9 @@ function Generator() {
       const data = await response.json();
 
       if (!response.ok) {
-        let errorMsg = "Server Error";
-        if (data.detail) {
-            errorMsg = typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail);
-        }
+        const errorMsg = data.detail
+          ? (typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail))
+          : "Server Error";
         setPushResults([{ serial: "System", status: 'error', message: errorMsg }]);
       } else if (data.results) {
         setPushResults(data.results);
@@ -190,30 +213,32 @@ function Generator() {
       <style>{customStyles}</style>
 
       <Stack gap="lg">
-        
+
         {backendError && (
           <Badge color="red" size="lg" variant="filled" leftSection={<IconAlertCircle size={14}/>}>
-              {backendError}
+            {backendError}
           </Badge>
         )}
 
         <Grid gutter="lg">
-          
+
           {/* LEFT COLUMN: INPUT FORM */}
           <Grid.Col span={{ base: 12, md: 4 }}>
             <Paper shadow="sm" p="lg" radius="lg" withBorder h="100%">
               <Title order={4} mb="md" c="gray.7">Add Device</Title>
-              
+
               <Stack gap="md">
                 <Select
                   label="Manufacturer"
-                  placeholder="Select Vendor"
+                  placeholder={loadingManufacturers ? "Loading..." : "Select Vendor"}
                   data={manufacturers}
                   value={selectedMan}
                   onChange={setSelectedMan}
                   searchable
                   variant="filled"
                   radius="md"
+                  disabled={loadingManufacturers}
+                  rightSection={loadingManufacturers ? <Loader size="xs" /> : null}
                 />
 
                 <Select
@@ -222,7 +247,7 @@ function Generator() {
                   data={models}
                   value={selectedModel}
                   onChange={setSelectedModel}
-                  disabled={!selectedMan}
+                  disabled={!selectedMan || loadingModels}
                   searchable
                   filter={optionsFilter}
                   rightSection={loadingModels ? <Loader size="xs" /> : null}
@@ -243,14 +268,14 @@ function Generator() {
                   }}
                 />
 
-                <Button 
-                  onClick={addDeviceToQueue} 
-                  fullWidth 
+                <Button
+                  onClick={addDeviceToQueue}
+                  fullWidth
                   mt="sm"
                   size="md"
                   radius="md"
                   className="btn-bounce"
-                  variant="gradient" 
+                  variant="gradient"
                   gradient={{ from: 'blue', to: 'cyan', deg: 90 }}
                   style={{ transition: 'transform 0.1s' }}
                 >
@@ -258,10 +283,10 @@ function Generator() {
                 </Button>
 
                 {lastUsed && (
-                  <Button 
-                    variant="light" 
-                    color="gray" 
-                    fullWidth 
+                  <Button
+                    variant="light"
+                    color="gray"
+                    fullWidth
                     size="xs"
                     radius="md"
                     className="btn-bounce"
@@ -282,38 +307,38 @@ function Generator() {
               <Group justify="space-between" mb="md">
                 <Group gap="xs">
                   <Title order={4} c="gray.7">Queue</Title>
-                  <Badge 
-                    circle 
-                    size="lg" 
-                    gradient={{ from: 'blue', to: 'cyan', deg: 90 }} 
+                  <Badge
+                    circle
+                    size="lg"
+                    gradient={{ from: 'blue', to: 'cyan', deg: 90 }}
                     variant="gradient"
                   >
                     {deviceQueue.length}
                   </Badge>
                 </Group>
-                
-                <Group gap="xs">
-                    <Button 
-                        onClick={exportToCSV} 
-                        disabled={deviceQueue.length === 0}
-                        color="green"
-                        variant="light"
-                        radius="md"
-                        className="btn-bounce"
-                    >
-                        CSV
-                    </Button>
 
-                    <Button
-                        onClick={handlePushToIntune}
-                        disabled={deviceQueue.length === 0}
-                        color="blue"
-                        radius="md"
-                        className="btn-bounce"
-                        leftSection={<IconCloudUpload size={18} />}
-                    >
-                        Push to Intune
-                    </Button>
+                <Group gap="xs">
+                  <Button
+                    onClick={exportToCSV}
+                    disabled={deviceQueue.length === 0}
+                    color="green"
+                    variant="light"
+                    radius="md"
+                    className="btn-bounce"
+                  >
+                    CSV
+                  </Button>
+
+                  <Button
+                    onClick={handlePushToIntune}
+                    disabled={deviceQueue.length === 0}
+                    color="blue"
+                    radius="md"
+                    className="btn-bounce"
+                    leftSection={<IconCloudUpload size={18} />}
+                  >
+                    Push to Intune
+                  </Button>
                 </Group>
               </Group>
 
@@ -346,12 +371,12 @@ function Generator() {
                             {device.serial}
                           </Table.Td>
                           <Table.Td style={{ textAlign: 'right' }}>
-                            <ActionIcon 
-                                color="red" 
-                                variant="subtle" 
-                                radius="xl"
-                                onClick={() => removeDevice(index)}
-                                className="btn-bounce"
+                            <ActionIcon
+                              color="red"
+                              variant="subtle"
+                              radius="xl"
+                              onClick={() => removeDevice(index)}
+                              className="btn-bounce"
                             >
                               ✕
                             </ActionIcon>
@@ -368,24 +393,50 @@ function Generator() {
         </Grid>
       </Stack>
 
+      {/* --- CONFIRMATION MODAL --- */}
+      <Modal
+        opened={confirmOpened}
+        onClose={closeConfirm}
+        title={<Text fw={700}>Confirm Push to Intune</Text>}
+        size="sm"
+        centered
+        radius="lg"
+        overlayProps={{ backgroundOpacity: 0.55, blur: 3 }}
+      >
+        <Stack>
+          <Text size="sm">
+            You are about to register <strong>{deviceQueue.length} device{deviceQueue.length !== 1 ? 's' : ''}</strong> with Microsoft Intune.
+          </Text>
+          <Text size="xs" c="dimmed">
+            This will call the live Graph API. Devices with matching serials will be overwritten.
+          </Text>
+          <Group justify="flex-end" mt="md">
+            <Button variant="default" radius="md" onClick={closeConfirm}>Cancel</Button>
+            <Button color="blue" radius="md" leftSection={<IconCloudUpload size={16} />} onClick={executePush}>
+              Confirm Push
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
       {/* --- RESULTS MODAL --- */}
-      <Modal 
-        opened={opened} 
-        onClose={close} 
-        title={<Text fw={700} c="blue">Intune Sync Status</Text>} 
-        size="lg" 
+      <Modal
+        opened={opened}
+        onClose={close}
+        title={<Text fw={700} c="blue">Intune Sync Status</Text>}
+        size="lg"
         centered
         radius="lg"
         overlayProps={{ backgroundOpacity: 0.55, blur: 3 }}
       >
         <Stack>
           {isPushing && (
-             <Stack align="center" py="xl">
-                <Loader size="lg" type="dots" color="blue" />
-                <Text size="sm" c="dimmed" fs="italic">Syncing with Microsoft Graph...</Text>
-             </Stack>
+            <Stack align="center" py="xl">
+              <Loader size="lg" type="dots" color="blue" />
+              <Text size="sm" c="dimmed" fs="italic">Syncing with Microsoft Graph...</Text>
+            </Stack>
           )}
-          
+
           {!isPushing && pushResults.length === 0 && (
             <Text c="dimmed" size="sm">Initializing upload...</Text>
           )}
@@ -420,11 +471,11 @@ function Generator() {
               </Table>
             </ScrollArea>
           )}
-          
+
           {!isPushing && (
-             <Button fullWidth onClick={close} variant="light" color="gray" radius="md">
-                Close Report
-             </Button>
+            <Button fullWidth onClick={close} variant="light" color="gray" radius="md">
+              Close Report
+            </Button>
           )}
         </Stack>
       </Modal>
