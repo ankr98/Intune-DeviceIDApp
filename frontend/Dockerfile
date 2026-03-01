@@ -1,6 +1,6 @@
 # --- STAGE 1: Build the React App ---
 # We use the 'node' image to build the artifacts
-FROM node:18-alpine as build
+FROM node:20-alpine AS build
 
 WORKDIR /app
 
