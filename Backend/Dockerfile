@@ -1,12 +1,15 @@
 # 1. Use an official Python runtime as a parent image
 # We use 'slim' to keep the image size small
-FROM python:3.10-slim
+FROM python:3.12-slim
 
 # 2. Set the working directory in the container
 WORKDIR /app
 
-# --- NEW: Install cabextract for HP/Dell sync ---
-RUN apt-get update && apt-get install -y cabextract && rm -rf /var/lib/apt/lists/* \
+# --- Install cabextract for HP/Dell sync ---
+# Switch apt sources to HTTPS (corporate firewalls often block HTTP)
+RUN sed -i 's|http://|https://|g' /etc/apt/sources.list.d/*.sources 2>/dev/null; \
+    sed -i 's|http://|https://|g' /etc/apt/sources.list 2>/dev/null; \
+    apt-get update && apt-get install -y --no-install-recommends cabextract && rm -rf /var/lib/apt/lists/* \
     && adduser --system --no-create-home appuser
 # ------------------------------------------------
 
