@@ -86,10 +86,9 @@ def _fetch_hp_platform_list():
         root = tree.getroot()
 
         models = set()
-        for entry in root.findall(".//Platform"):
-            product_name = entry.find("ProductName")
-            if product_name is not None and product_name.text:
-                models.add(product_name.text.strip())
+        for pn in root.findall(".//ProductName"):
+            if pn.text:
+                models.add(pn.text.strip())
 
         logger.info(f"[HP] platformList: found {len(models)} models.")
         return models
