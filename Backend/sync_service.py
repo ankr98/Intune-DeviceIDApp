@@ -2,6 +2,7 @@ import requests
 import sqlite3
 import os
 import logging
+import shutil
 import tempfile
 import xml.etree.ElementTree as ET
 import platform
@@ -17,6 +18,40 @@ DB_FILE = os.path.join(DATA_DIR, "catalogue.db")
 
 # Ensure the folder exists (in case this script runs standalone)
 os.makedirs(DATA_DIR, exist_ok=True)
+
+# --- HELPERS ---
+
+def _extract_cab(url, timeout=30):
+    """Download and extract a CAB file, return the temp directory path and cleanup func."""
+    response = requests.get(url, timeout=timeout)
+    response.raise_for_status()
+
+    tmpdir = tempfile.mkdtemp()
+    cab_path = os.path.join(tmpdir, "catalog.cab")
+
+    with open(cab_path, "wb") as f:
+        f.write(response.content)
+
+    current_os = platform.system()
+    if current_os == "Windows":
+        cmd = ["extrac32", "/E", "/L", tmpdir, cab_path]
+    elif current_os == "Linux":
+        cmd = ["cabextract", "-d", tmpdir, cab_path]
+    else:
+        raise RuntimeError(f"Unsupported OS for CAB extraction: {current_os}")
+
+    subprocess.run(cmd, check=True, capture_output=True, text=True)
+    return tmpdir
+
+
+def _find_xml(directory, filename_lower):
+    """Walk a directory and return the first XML matching the given lowercase filename."""
+    for root, _, files in os.walk(directory):
+        for file in files:
+            if file.lower() == filename_lower:
+                return os.path.join(root, file)
+    return None
+
 
 # --- VENDOR PROVIDERS ---
 
@@ -35,71 +70,88 @@ def fetch_lenovo():
         logger.error(f"[LENOVO] Sync failed: {e}")
         return ("Lenovo", [])
 
+def _fetch_hp_platform_list():
+    """Fetch HP models from the imagepal platformList.cab (ProductName elements)."""
+    url = "https://ftp.hp.com/pub/caps-softpaq/cmit/imagepal/ref/platformList.cab"
+    logger.info("[HP] Fetching platformList catalogue...")
+
+    tmpdir = _extract_cab(url, timeout=30)
+    try:
+        target_xml = _find_xml(tmpdir, "platformlist.xml")
+        if not target_xml:
+            logger.error("[HP] platformList.xml not found in extracted CAB.")
+            return set()
+
+        tree = ET.parse(target_xml)
+        root = tree.getroot()
+
+        models = set()
+        for entry in root.findall(".//Platform"):
+            product_name = entry.find("ProductName")
+            if product_name is not None and product_name.text:
+                models.add(product_name.text.strip())
+
+        logger.info(f"[HP] platformList: found {len(models)} models.")
+        return models
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def _fetch_hp_driver_pack():
+    """Fetch HP models from the HPClientDriverPackCatalog.cab (SystemName elements)."""
+    url = "https://ftp.hp.com/pub/caps-softpaq/cmit/HPClientDriverPackCatalog.cab"
+    logger.info("[HP] Fetching DriverPack catalogue...")
+
+    tmpdir = _extract_cab(url, timeout=60)
+    try:
+        # Find the extracted XML (name may vary, look for any .xml file)
+        target_xml = None
+        for root_dir, _, files in os.walk(tmpdir):
+            for file in files:
+                if file.lower().endswith(".xml"):
+                    target_xml = os.path.join(root_dir, file)
+                    break
+            if target_xml:
+                break
+
+        if not target_xml:
+            logger.error("[HP] No XML found in DriverPack CAB.")
+            return set()
+
+        tree = ET.parse(target_xml)
+        root = tree.getroot()
+
+        models = set()
+        for entry in root.findall(".//ProductOSDriverPack"):
+            system_name = entry.find("SystemName")
+            if system_name is not None and system_name.text:
+                models.add(system_name.text.strip())
+
+        logger.info(f"[HP] DriverPack: found {len(models)} models.")
+        return models
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
 def fetch_hp():
     """
-    Robust Cross-Platform HP Sync using 'extrac32' (Windows) and 'cabextract' (Linux).
+    Fetch HP models from two sources and merge them.
+    De-duplication happens both in-memory (set union) and in the DB (UNIQUE constraint).
     """
-    url = "https://ftp.hp.com/pub/caps-softpaq/cmit/imagepal/ref/platformList.cab"
-    logger.info("[HP] Fetching catalogue (CAB extraction)...")
+    models = set()
 
     try:
-        response = requests.get(url, timeout=30)
-        response.raise_for_status()
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            cab_path = os.path.join(tmpdir, "hp_catalog.cab")
-
-            with open(cab_path, "wb") as f:
-                f.write(response.content)
-
-            current_os = platform.system()
-
-            try:
-                if current_os == "Windows":
-                    cmd = ["extrac32", "/E", "/L", tmpdir, cab_path]
-                elif current_os == "Linux":
-                    cmd = ["cabextract", "-d", tmpdir, cab_path]
-                else:
-                    logger.warning(f"[HP] Unsupported OS for CAB extraction: {current_os}")
-                    return ("HP", [])
-
-                subprocess.run(cmd, check=True, capture_output=True, text=True)
-
-            except subprocess.CalledProcessError as e:
-                logger.error(f"[HP] CAB extraction command failed: {e.stderr}")
-                return ("HP", [])
-            except FileNotFoundError:
-                logger.error(f"[HP] Extraction tool '{cmd[0]}' not found. Is it installed?")
-                return ("HP", [])
-
-            target_xml = None
-            for root, _, files in os.walk(tmpdir):
-                for file in files:
-                    if file.lower() == "platformlist.xml":
-                        target_xml = os.path.join(root, file)
-                        break
-                if target_xml:
-                    break
-
-            if not target_xml:
-                logger.error("[HP] platformList.xml not found in extracted CAB.")
-                return ("HP", [])
-
-            tree = ET.parse(target_xml)
-            root = tree.getroot()
-
-            models = []
-            for platform_entry in root.findall(".//Platform"):
-                product_name = platform_entry.find("ProductName")
-                if product_name is not None and product_name.text:
-                    models.append(product_name.text.strip())
-
-            logger.info(f"[HP] Found {len(models)} models.")
-            return ("HP", list(set(models)))
-
+        models |= _fetch_hp_platform_list()
     except Exception as e:
-        logger.error(f"[HP] Sync failed: {e}")
-        return ("HP", [])
+        logger.error(f"[HP] platformList sync failed: {e}")
+
+    try:
+        models |= _fetch_hp_driver_pack()
+    except Exception as e:
+        logger.error(f"[HP] DriverPack sync failed: {e}")
+
+    logger.info(f"[HP] Combined total: {len(models)} unique models.")
+    return ("HP", list(models))
 
 def fetch_dell():
     """
@@ -110,60 +162,44 @@ def fetch_dell():
     logger.info("[DELL] Fetching catalogue (CAB extraction)...")
 
     try:
-        response = requests.get(url, timeout=60)
-        response.raise_for_status()
+        tmpdir = _extract_cab(url, timeout=60)
+    except Exception as e:
+        logger.error(f"[DELL] CAB extraction failed: {e}")
+        return ("Dell", [])
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            cab_path = os.path.join(tmpdir, "dell_catalog.cab")
-
-            with open(cab_path, "wb") as f:
-                f.write(response.content)
-
-            current_os = platform.system()
-            try:
-                if current_os == "Windows":
-                    cmd = ["extrac32", "/E", "/L", tmpdir, cab_path]
-                elif current_os == "Linux":
-                    cmd = ["cabextract", "-d", tmpdir, cab_path]
-                else:
-                    logger.warning(f"[DELL] Unsupported OS for CAB extraction: {current_os}")
-                    return ("Dell", [])
-
-                subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            except Exception as e:
-                logger.error(f"[DELL] CAB extraction failed: {e}")
-                return ("Dell", [])
-
-            target_xml = None
-            for root, _, files in os.walk(tmpdir):
-                for file in files:
-                    if file.lower().endswith(".xml"):
-                        target_xml = os.path.join(root, file)
-                        break
-                if target_xml:
+    try:
+        target_xml = None
+        for root_dir, _, files in os.walk(tmpdir):
+            for file in files:
+                if file.lower().endswith(".xml"):
+                    target_xml = os.path.join(root_dir, file)
                     break
+            if target_xml:
+                break
 
-            if not target_xml:
-                logger.error("[DELL] No XML file found in extracted CAB.")
-                return ("Dell", [])
+        if not target_xml:
+            logger.error("[DELL] No XML file found in extracted CAB.")
+            return ("Dell", [])
 
-            models = set()
-            context = ET.iterparse(target_xml, events=("end",))
-            for _, elem in context:
-                if elem.tag == "Model":
-                    display_node = elem.find("Display")
-                    if display_node is not None and display_node.text:
-                        models.add(display_node.text.strip())
-                    elif elem.get("name"):
-                        models.add(elem.get("name").strip())
-                    elem.clear()
+        models = set()
+        context = ET.iterparse(target_xml, events=("end",))
+        for _, elem in context:
+            if elem.tag == "Model":
+                display_node = elem.find("Display")
+                if display_node is not None and display_node.text:
+                    models.add(display_node.text.strip())
+                elif elem.get("name"):
+                    models.add(elem.get("name").strip())
+                elem.clear()
 
-            logger.info(f"[DELL] Found {len(models)} models.")
-            return ("Dell", list(models))
+        logger.info(f"[DELL] Found {len(models)} models.")
+        return ("Dell", list(models))
 
     except Exception as e:
         logger.error(f"[DELL] Sync failed: {e}")
         return ("Dell", [])
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 # --- CORE ENGINE ---
 
