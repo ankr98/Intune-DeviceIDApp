@@ -82,13 +82,12 @@ def _fetch_hp_platform_list():
             logger.error("[HP] platformList.xml not found in extracted CAB.")
             return set()
 
-        tree = ET.parse(target_xml)
-        root = tree.getroot()
-
         models = set()
-        for pn in root.findall(".//ProductName"):
-            if pn.text:
-                models.add(pn.text.strip())
+        for _, elem in ET.iterparse(target_xml, events=("end",)):
+            if elem.tag == "ProductName" and elem.text:
+                models.add(elem.text.strip())
+            elif elem.tag == "Platform":
+                elem.clear()
 
         logger.info(f"[HP] platformList: found {len(models)} models.")
         return models
