@@ -71,8 +71,8 @@ def fetch_lenovo():
         return ("Lenovo", [])
 
 def _fetch_hp_platform_list():
-    """Fetch HP models from the imagepal platformList.cab (ProductName elements)."""
-    url = "https://ftp.hp.com/pub/caps-softpaq/cmit/imagepal/ref/platformList.cab"
+    """Fetch HP models from the HPIA platformList.cab (ProductName elements)."""
+    url = "https://hpia.hpcloud.hp.com/ref/platformList.cab"
     logger.info("[HP] Fetching platformList catalogue...")
 
     tmpdir = _extract_cab(url, timeout=30)

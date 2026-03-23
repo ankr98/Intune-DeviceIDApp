@@ -114,7 +114,7 @@ The backend container requires outbound HTTPS access to the following:
 | Azure Auth | `*.microsoftonline.com` | TCP 443 | OAuth2 token acquisition |
 | Microsoft Graph | `*.microsoft.com` | TCP 443 | Intune device import API |
 | Dell | `*.dell.com` | TCP 443 | CatalogPC.cab download |
-| HP | `*.hp.com` | TCP 443 | platformList.cab download |
+| HP | `*.hp.com`, `*.hpcloud.hp.com` | TCP 443 | HPIA platformList.cab + DriverPack catalog |
 | Lenovo | `*.lenovo.com` | TCP 443 | catalogv2.xml download |
 
 ---
@@ -213,11 +213,12 @@ The backend automatically syncs device models from three manufacturers:
 | Manufacturer | Source | Format | Update Frequency |
 |-------------|--------|--------|-----------------|
 | **Lenovo** | CDRT catalog (catalogv2.xml) | XML | Every 24 hours |
-| **HP** | CMIT platform list (platformList.cab) | CAB → XML | Every 24 hours |
+| **HP** | HPIA platform list (platformList.cab) + HPClientDriverPackCatalog.cab | CAB → XML | Every 24 hours |
 | **Dell** | CatalogPC.cab | CAB → XML (streamed) | Every 24 hours |
 
 - On first startup, if the database is empty, all catalogs are downloaded immediately
 - Dell's catalog (~100 MB) is parsed with iterative XML parsing to keep memory usage low
+- HP syncs from two sources (HPIA platform list + DriverPack catalog) and merges them for broader model coverage
 - HP and Dell CAB files are extracted using `cabextract` (Linux) or `extrac32` (Windows)
 - New models are inserted; duplicates are ignored via a unique constraint on `(manufacturer, model_name)`
 
