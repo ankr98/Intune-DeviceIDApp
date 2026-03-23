@@ -297,4 +297,4 @@ The Vite dev server proxies `/api` requests to `http://127.0.0.1:8000` automatic
 
 ## License
 
-This project is provided as-is for internal/corporate use. See the repository for license details.
+This project is licensed under the GNU AGPL v3 License. See the repository for license details.
