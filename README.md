@@ -16,9 +16,10 @@ The app automatically syncs official hardware catalogs from Dell, HP, and Lenovo
 - **Device Model Catalog** — Automatically downloads and updates hardware models from Dell, HP, and Lenovo daily
 - **Searchable Dropdowns** — Quickly find manufacturers and models with type-ahead search
 - **Serial Number Validation** — Manufacturer-specific format warnings (e.g., Dell 7-char Service Tags, HP 10-char serials)
-- **Batch Queue** — Add multiple devices to a queue before pushing, with CSV export
+- **Batch Queue** — Add multiple devices to a queue before pushing, with CSV export and one-click clear
 - **Intune Integration** — Bulk-imports devices to Intune via the Microsoft Graph API with per-device status reporting
 - **Quick Load** — Recalls your last-used manufacturer/model for fast repeat entries
+- **Default Manufacturer** — Pre-select a manufacturer in Settings to skip a click for fleets dominated by one vendor
 - **Dark Mode** — Ships with dark theme by default, with a light mode toggle
 - **Secure by Design** — Backend is not exposed to the host network; only Nginx is externally accessible
 
@@ -123,18 +124,19 @@ The backend container requires outbound HTTPS access to the following:
 
 ### Generator Page
 
-1. **Select a manufacturer** from the searchable dropdown
+1. **Select a manufacturer** from the searchable dropdown (auto-filled if a default is set in Settings)
 2. **Select a model** — the list filters based on the chosen manufacturer
 3. **Enter the serial number** — the app warns if the format doesn't match the manufacturer's convention
 4. **Add to Queue** — repeat for as many devices as needed
 5. **Push to Intune** — review the confirmation dialog, then submit. Results show per-device success or failure
 
-The device queue is stored in your browser's session storage, so it survives page refreshes but clears when you close the tab.
+Use the **Clear** button next to the queue to wipe all queued devices at once (with confirmation), or **CSV** to export the queue. The device queue is stored in your browser's session storage, so it survives page refreshes but clears when you close the tab.
 
 ### Settings Page
 
 - Enter and save your Azure credentials (Tenant ID, Client ID, Client Secret)
 - Test the connection before saving
+- Set a **Default Manufacturer** to pre-select on the Generator page — useful for fleets that are mostly one vendor
 - Toggle between dark and light themes
 
 ---

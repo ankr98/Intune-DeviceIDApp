@@ -30,6 +30,7 @@ class AzureConfig(BaseModel):
     tenant_id: str
     client_id: str
     client_secret: str
+    default_manufacturer: Optional[str] = None
 
 class DeviceEntry(BaseModel):
     manufacturer: str
@@ -158,6 +159,10 @@ def save_config(config: AzureConfig):
             logger.info("[CONFIG] Client secret updated.")
         else:
             logger.info("[CONFIG] Client secret unchanged (masked value received).")
+        conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES ('default_manufacturer', ?)",
+            (config.default_manufacturer or "",)
+        )
         conn.commit()
         return {"status": "success"}
     finally:
