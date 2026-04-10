@@ -5,7 +5,7 @@ import {
   TextInput, Table, ActionIcon, Grid, Badge, ScrollArea, Loader, Modal
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { IconHistory, IconCloudUpload, IconCheck, IconX, IconAlertCircle, IconDeviceDesktop } from '@tabler/icons-react';
+import { IconHistory, IconCloudUpload, IconCheck, IconX, IconAlertCircle, IconDeviceDesktop, IconTrash } from '@tabler/icons-react';
 import { API_URL } from '../config';
 
 // --- CUSTOM ANIMATION STYLES ---
@@ -83,6 +83,16 @@ function Generator() {
       })
       .catch(() => setBackendError("Backend offline. Is uvicorn running?"))
       .finally(() => setLoadingManufacturers(false));
+
+    // Load default manufacturer from saved settings (only if nothing already selected)
+    fetch(`${API_URL}/config`)
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (data && data.default_manufacturer) {
+          setSelectedMan(prev => prev || data.default_manufacturer);
+        }
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -143,6 +153,12 @@ function Generator() {
 
   const removeDevice = (indexToRemove) => {
     setDeviceQueue(deviceQueue.filter((_, index) => index !== indexToRemove));
+  };
+
+  const clearQueue = () => {
+    if (deviceQueue.length === 0) return;
+    if (!confirm(`Clear all ${deviceQueue.length} device${deviceQueue.length !== 1 ? 's' : ''} from the queue?`)) return;
+    setDeviceQueue([]);
   };
 
   const recallLastUsed = () => {
@@ -318,6 +334,18 @@ function Generator() {
                 </Group>
 
                 <Group gap="xs">
+                  <Button
+                    onClick={clearQueue}
+                    disabled={deviceQueue.length === 0}
+                    color="red"
+                    variant="light"
+                    radius="md"
+                    className="btn-bounce"
+                    leftSection={<IconTrash size={16} />}
+                  >
+                    Clear
+                  </Button>
+
                   <Button
                     onClick={exportToCSV}
                     disabled={deviceQueue.length === 0}

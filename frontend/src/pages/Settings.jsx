@@ -1,7 +1,7 @@
-import { 
-  Container, Paper, Title, TextInput, PasswordInput, Button, Stack, Group, Text, 
-  useMantineColorScheme, useComputedColorScheme, Notification, LoadingOverlay, 
-  SegmentedControl, Center, Box, rem
+import {
+  Container, Paper, Title, TextInput, PasswordInput, Button, Stack, Group, Text,
+  useMantineColorScheme, useComputedColorScheme, Notification, LoadingOverlay,
+  SegmentedControl, Center, Box, rem, Select
 } from '@mantine/core';
 import { useState, useEffect } from 'react';
 import { IconMoon, IconSun, IconCheck, IconX, IconDeviceFloppy, IconServer } from '@tabler/icons-react';
@@ -30,7 +30,9 @@ function Settings() {
   const [tenantId, setTenantId] = useState('');
   const [clientId, setClientId] = useState('');
   const [clientSecret, setClientSecret] = useState('');
-  
+  const [defaultManufacturer, setDefaultManufacturer] = useState('');
+  const [manufacturers, setManufacturers] = useState([]);
+
   // State
   const [loading, setLoading] = useState(false);
   const [notification, setNotification] = useState(null);
@@ -46,8 +48,14 @@ function Settings() {
         if (data.tenant_id) setTenantId(data.tenant_id);
         if (data.client_id) setClientId(data.client_id);
         if (data.client_secret) setClientSecret(data.client_secret);
+        if (data.default_manufacturer) setDefaultManufacturer(data.default_manufacturer);
       })
       .catch(err => console.log("No config found on server yet."));
+
+    fetch(`${API_URL}/manufacturers`)
+      .then(res => res.ok ? res.json() : [])
+      .then(data => { if (Array.isArray(data)) setManufacturers(data); })
+      .catch(() => {});
   }, []);
 
   // --- 2. TEST CONNECTION ---
@@ -92,7 +100,8 @@ function Settings() {
             body: JSON.stringify({
                 tenant_id: tenantId,
                 client_id: clientId,
-                client_secret: clientSecret
+                client_secret: clientSecret,
+                default_manufacturer: defaultManufacturer || null
             })
         });
 
@@ -187,12 +196,24 @@ function Settings() {
             radius="md"
           />
 
-          <PasswordInput 
-            label="Client Secret" 
-            placeholder="Value from Certificates & Secrets" 
+          <PasswordInput
+            label="Client Secret"
+            placeholder="Value from Certificates & Secrets"
             description="If previously saved, this may appear as stars"
             value={clientSecret}
             onChange={(e) => setClientSecret(e.currentTarget.value)}
+            radius="md"
+          />
+
+          <Select
+            label="Default Manufacturer"
+            description="Pre-selects this manufacturer on the Generator page"
+            placeholder="None — pick manually each time"
+            data={manufacturers}
+            value={defaultManufacturer || null}
+            onChange={(value) => setDefaultManufacturer(value || '')}
+            searchable
+            clearable
             radius="md"
           />
 
