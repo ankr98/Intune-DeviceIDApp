@@ -25,7 +25,9 @@
       "Bash(curl -s \"http://localhost:8090/api/models?manufacturer=Dell\")",
       "Bash(curl -s http://localhost:8090/api/manufacturers)",
       "Bash(curl -s http://localhost:8090/)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Read(//c/DEV/**)",
+      "Bash(curl -s -o /dev/null -w '%{http_code}' http://localhost:8090/)"
     ]
   }
 }

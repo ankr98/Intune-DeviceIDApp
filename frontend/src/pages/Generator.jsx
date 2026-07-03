@@ -10,23 +10,22 @@ import { API_URL } from '../config';
 
 // --- CUSTOM ANIMATION STYLES ---
 const customStyles = `
-  @keyframes slideIn {
-    from { opacity: 0; transform: translateX(-20px); }
-    to { opacity: 1; transform: translateX(0); }
+  @keyframes fadeInRow {
+    from { opacity: 0; }
+    to { opacity: 1; }
   }
   @keyframes popIn {
     from { opacity: 0; transform: scale(0.8); }
     to { opacity: 1; transform: scale(1); }
   }
   .animate-row {
-    animation: slideIn 0.3s ease-out forwards;
+    animation: fadeInRow 0.25s ease-out both;
   }
   .hover-scale {
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    transition: box-shadow 0.2s ease;
   }
   .hover-scale:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 15px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
   }
   .btn-bounce:active {
     transform: scale(0.95);
@@ -416,7 +415,7 @@ function Generator() {
                       </Table.Tr>
                     ) : (
                       deviceQueue.map((device, index) => (
-                        <Table.Tr key={device.serial} className="animate-row" style={{ animationDelay: `${index * 0.05}s` }}>
+                        <Table.Tr key={device.serial} className="animate-row">
                           <Table.Td>{device.manufacturer}</Table.Td>
                           <Table.Td>{device.model}</Table.Td>
                           <Table.Td fw={700} c="blue.5" style={{ fontFamily: 'var(--mantine-font-family-monospace)' }}>
@@ -506,7 +505,7 @@ function Generator() {
                 </Table.Thead>
                 <Table.Tbody>
                   {pushResults.map((res, index) => (
-                    <Table.Tr key={`${res.serial}-${index}`} style={{ animation: 'popIn 0.3s ease-out forwards', animationDelay: `${index * 0.05}s` }}>
+                    <Table.Tr key={`${res.serial}-${index}`} style={{ animation: 'popIn 0.3s ease-out both', animationDelay: `${index * 0.05}s` }}>
                       <Table.Td fw={600} style={{ fontFamily: 'var(--mantine-font-family-monospace)' }}>{res.serial || "N/A"}</Table.Td>
                       <Table.Td>
                         {res.status === 'success' ? (
