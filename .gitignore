@@ -185,3 +185,6 @@ catalogue.db
 *.db
 Backend/data
 *.sqlite3
+
+# Claude Code personal settings
+.claude/settings.local.json
