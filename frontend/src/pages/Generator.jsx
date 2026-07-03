@@ -41,6 +41,7 @@ function Generator() {
   const [selectedMan, setSelectedMan] = useState("");
   const [selectedModel, setSelectedModel] = useState("");
   const [serialNumber, setSerialNumber] = useState("");
+  const [addError, setAddError] = useState(null);
 
   const [deviceQueue, setDeviceQueue] = useState([]);
   const [loadingManufacturers, setLoadingManufacturers] = useState(true);
@@ -61,7 +62,7 @@ function Generator() {
   useEffect(() => {
     const saved = sessionStorage.getItem('deviceQueue');
     if (saved) {
-      try { setDeviceQueue(JSON.parse(saved)); } catch (_) {}
+      try { setDeviceQueue(JSON.parse(saved)); } catch { /* ignore corrupt sessionStorage */ }
     }
   }, []);
 
@@ -72,20 +73,25 @@ function Generator() {
 
   // --- DATA FETCHING ---
   useEffect(() => {
+    const controller = new AbortController();
     setLoadingManufacturers(true);
-    fetch(`${API_URL}/manufacturers`)
+    fetch(`${API_URL}/manufacturers`, { signal: controller.signal })
       .then(res => {
         if (!res.ok) throw new Error("Failed");
         return res.json();
       })
       .then(data => {
         if (Array.isArray(data)) setManufacturers(data);
+        setLoadingManufacturers(false);
       })
-      .catch(() => setBackendError("Backend offline. Is uvicorn running?"))
-      .finally(() => setLoadingManufacturers(false));
+      .catch((err) => {
+        if (err.name === 'AbortError') return;
+        setBackendError("Backend offline. Is uvicorn running?");
+        setLoadingManufacturers(false);
+      });
 
     // Load default manufacturer from saved settings (only if nothing already selected)
-    fetch(`${API_URL}/config`)
+    fetch(`${API_URL}/config`, { signal: controller.signal })
       .then(res => res.ok ? res.json() : null)
       .then(data => {
         if (data && data.default_manufacturer) {
@@ -93,24 +99,29 @@ function Generator() {
         }
       })
       .catch(() => {});
+    return () => controller.abort();
   }, []);
 
   useEffect(() => {
-    if (selectedMan) {
-      setLoadingModels(true);
-      fetch(`${API_URL}/models?manufacturer=${selectedMan}`)
-        .then(res => res.json())
-        .then(data => {
-          setModels(Array.isArray(data) ? data : []);
-          if (selectedModel && Array.isArray(data) && !data.includes(selectedModel)) {
-            setSelectedModel("");
-          }
-          setLoadingModels(false);
-        })
-        .catch(() => setLoadingModels(false));
-    } else {
+    if (!selectedMan) {
       setModels([]);
+      return;
     }
+    const controller = new AbortController();
+    setLoadingModels(true);
+    fetch(`${API_URL}/models?manufacturer=${encodeURIComponent(selectedMan)}`, { signal: controller.signal })
+      .then(res => res.json())
+      .then(data => {
+        setModels(Array.isArray(data) ? data : []);
+        setSelectedModel(current =>
+          current && Array.isArray(data) && !data.includes(current) ? "" : current
+        );
+        setLoadingModels(false);
+      })
+      .catch((err) => {
+        if (err.name !== 'AbortError') setLoadingModels(false);
+      });
+    return () => controller.abort();
   }, [selectedMan]);
 
   // --- VALIDATION ---
@@ -134,13 +145,14 @@ function Generator() {
   // --- ACTIONS ---
   const addDeviceToQueue = () => {
     if (!selectedMan || !selectedModel || !serialNumber) {
-      alert("Please fill in all fields.");
+      setAddError("Please fill in all fields.");
       return;
     }
     if (deviceQueue.some(d => d.serial === serialNumber.toUpperCase().trim())) {
-      alert("This serial number is already in your queue!");
+      setAddError("This serial number is already in your queue!");
       return;
     }
+    setAddError(null);
     const newDevice = {
       manufacturer: selectedMan,
       model: selectedModel,
@@ -186,6 +198,7 @@ function Generator() {
 
   // Step 2: User confirmed — execute the actual push
   const executePush = async () => {
+    if (isPushing) return;
     closeConfirm();
     setIsPushing(true);
     setPushResults([]);
@@ -208,7 +221,7 @@ function Generator() {
       } else {
         setPushResults([{ serial: "System", status: 'error', message: "Invalid response format" }]);
       }
-    } catch (error) {
+    } catch {
       setPushResults([{ serial: "System", status: 'error', message: 'Failed to contact backend.' }]);
     } finally {
       setIsPushing(false);
@@ -249,7 +262,7 @@ function Generator() {
                   placeholder={loadingManufacturers ? "Loading..." : "Select Vendor"}
                   data={manufacturers}
                   value={selectedMan}
-                  onChange={setSelectedMan}
+                  onChange={(value) => { setSelectedMan(value); setAddError(null); }}
                   searchable
                   variant="filled"
                   radius="md"
@@ -262,7 +275,7 @@ function Generator() {
                   placeholder={loadingModels ? "Loading..." : "Search Model..."}
                   data={models}
                   value={selectedModel}
-                  onChange={setSelectedModel}
+                  onChange={(value) => { setSelectedModel(value); setAddError(null); }}
                   disabled={!selectedMan || loadingModels}
                   searchable
                   filter={optionsFilter}
@@ -275,7 +288,7 @@ function Generator() {
                   label="Serial Number"
                   placeholder="e.g. 5CD1234..."
                   value={serialNumber}
-                  onChange={(e) => setSerialNumber(e.currentTarget.value)}
+                  onChange={(e) => { setSerialNumber(e.currentTarget.value); setAddError(null); }}
                   error={serialWarning}
                   variant="filled"
                   radius="md"
@@ -297,6 +310,10 @@ function Generator() {
                 >
                   Add to Queue
                 </Button>
+
+                {addError && (
+                  <Text c="red" size="xs">{addError}</Text>
+                )}
 
                 {lastUsed && (
                   <Button
@@ -392,7 +409,7 @@ function Generator() {
                       </Table.Tr>
                     ) : (
                       deviceQueue.map((device, index) => (
-                        <Table.Tr key={index} className="animate-row" style={{ animationDelay: `${index * 0.05}s` }}>
+                        <Table.Tr key={device.serial} className="animate-row" style={{ animationDelay: `${index * 0.05}s` }}>
                           <Table.Td>{device.manufacturer}</Table.Td>
                           <Table.Td>{device.model}</Table.Td>
                           <Table.Td style={{ fontFamily: 'monospace', fontWeight: 'bold', color: '#228be6' }}>
@@ -440,7 +457,7 @@ function Generator() {
           </Text>
           <Group justify="flex-end" mt="md">
             <Button variant="default" radius="md" onClick={closeConfirm}>Cancel</Button>
-            <Button color="blue" radius="md" leftSection={<IconCloudUpload size={16} />} onClick={executePush}>
+            <Button color="blue" radius="md" leftSection={<IconCloudUpload size={16} />} onClick={executePush} loading={isPushing} disabled={isPushing}>
               Confirm Push
             </Button>
           </Group>
@@ -481,7 +498,7 @@ function Generator() {
                 </Table.Thead>
                 <Table.Tbody>
                   {pushResults.map((res, index) => (
-                    <Table.Tr key={index} style={{ animation: 'popIn 0.3s ease-out forwards', animationDelay: `${index * 0.05}s` }}>
+                    <Table.Tr key={`${res.serial}-${index}`} style={{ animation: 'popIn 0.3s ease-out forwards', animationDelay: `${index * 0.05}s` }}>
                       <Table.Td fw={600} style={{ fontFamily: 'monospace' }}>{res.serial || "N/A"}</Table.Td>
                       <Table.Td>
                         {res.status === 'success' ? (

@@ -7,6 +7,7 @@ import tempfile
 import xml.etree.ElementTree as ET
 import platform
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 
 # --- LOGGING SETUP ---
 logger = logging.getLogger(__name__)
@@ -166,14 +167,16 @@ def fetch_dell():
         return ("Dell", [])
 
     try:
-        target_xml = None
-        for root_dir, _, files in os.walk(tmpdir):
-            for file in files:
-                if file.lower().endswith(".xml"):
-                    target_xml = os.path.join(root_dir, file)
+        # Prefer the known catalogue file; fall back to any XML in the CAB.
+        target_xml = _find_xml(tmpdir, "catalogpc.xml")
+        if not target_xml:
+            for root_dir, _, files in os.walk(tmpdir):
+                for file in files:
+                    if file.lower().endswith(".xml"):
+                        target_xml = os.path.join(root_dir, file)
+                        break
+                if target_xml:
                     break
-            if target_xml:
-                break
 
         if not target_xml:
             logger.error("[DELL] No XML file found in extracted CAB.")
@@ -207,30 +210,28 @@ def save_to_db(manufacturer, models):
         return 0
 
     conn = sqlite3.connect(DB_FILE)
-    conn.execute("PRAGMA journal_mode=WAL")
-    cursor = conn.cursor()
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS models (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                manufacturer TEXT,
+                model_name TEXT,
+                UNIQUE(manufacturer, model_name)
+            )
+        ''')
 
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS models (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            manufacturer TEXT,
-            model_name TEXT,
-            UNIQUE(manufacturer, model_name)
-        )
-    ''')
-
-    count = 0
-    for name in models:
-        cursor.execute(
+        # rowcount is unreliable with executemany + OR IGNORE, so count via total_changes
+        changes_before = conn.total_changes
+        conn.executemany(
             "INSERT OR IGNORE INTO models (manufacturer, model_name) VALUES (?, ?)",
-            (manufacturer, name.strip())
+            [(manufacturer, name.strip()) for name in models]
         )
-        if cursor.rowcount > 0:
-            count += 1
-
-    conn.commit()
-    conn.close()
-    return count
+        count = conn.total_changes - changes_before
+        conn.commit()
+        return count
+    finally:
+        conn.close()
 
 def run_sync_all():
     """The master orchestrator."""
@@ -238,9 +239,13 @@ def run_sync_all():
 
     providers = [fetch_lenovo, fetch_hp, fetch_dell]
 
+    # Downloads are independent and network-bound: fetch in parallel,
+    # then write sequentially (single SQLite writer).
+    with ThreadPoolExecutor(max_workers=len(providers)) as executor:
+        results = list(executor.map(lambda p: p(), providers))
+
     total_new = 0
-    for provider in providers:
-        vendor_name, model_list = provider()
+    for vendor_name, model_list in results:
         added = save_to_db(vendor_name, model_list)
         logger.info(f"[SYNC] {vendor_name}: {len(model_list)} total, {added} new added.")
         total_new += added

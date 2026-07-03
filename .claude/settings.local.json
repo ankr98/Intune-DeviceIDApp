@@ -1,7 +1,31 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python -c \":*)"
+      "Bash(python -c \":*)",
+      "Bash(/c/DEV/Intune-DeviceIDApp/Backend/venv/Scripts/python.exe -m pip list --format=freeze)",
+      "Bash(/c/DEV/Intune-DeviceIDApp/Backend/venv/Scripts/python.exe -m pip index versions APScheduler)",
+      "Bash(./venv/Scripts/python.exe -m py_compile main.py sync_service.py)",
+      "Bash(npm install *)",
+      "Bash(npm run *)",
+      "Bash(docker info *)",
+      "PowerShell(Start-Process \"C:\\\\Program Files\\\\Docker\\\\Docker\\\\Docker Desktop.exe\")",
+      "PowerShell(\"launched\")",
+      "Bash(./venv/Scripts/python.exe -m pip install -q \"APScheduler==3.11.3\")",
+      "Bash(./venv/Scripts/python.exe -c \"import main; print\\('main.py imports OK'\\); print\\('routes:', [r.path for r in main.app.routes if hasattr\\(r,'path'\\)]\\)\")",
+      "Bash(./venv/Scripts/python.exe sync_service.py)",
+      "Bash(docker volume *)",
+      "Bash(docker run --rm -v intune-deviceidapp_app_data:/data python:3.10-slim python -c ' *)",
+      "Bash(docker compose *)",
+      "Bash(curl -s http://localhost:8090/api/health)",
+      "Bash(curl -s --max-time 3 http://localhost:8000/health)",
+      "Bash(curl -s -H \"Accept-Encoding: gzip\" -I http://localhost:8090/)",
+      "Bash(curl -s -I http://localhost:8090/api/health)",
+      "Bash(curl -s -H \"Origin: http://evil.example\" -o /dev/null -D - http://localhost:8090/api/health)",
+      "Bash(curl -s -X POST http://localhost:8090/api/test-azure-connection -H \"Content-Type: application/json\" -d '{\"tenant_id\":\"not-a-tenant\",\"client_id\":\"x\",\"client_secret\":\"y\"}')",
+      "Bash(curl -s \"http://localhost:8090/api/models?manufacturer=Dell\")",
+      "Bash(curl -s http://localhost:8090/api/manufacturers)",
+      "Bash(curl -s http://localhost:8090/)",
+      "Bash(git add *)"
     ]
   }
 }
