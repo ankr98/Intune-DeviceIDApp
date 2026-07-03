@@ -10,26 +10,31 @@ import { API_URL } from '../config';
 
 // --- CUSTOM ANIMATION STYLES ---
 const customStyles = `
-  @keyframes slideIn {
-    from { opacity: 0; transform: translateX(-20px); }
-    to { opacity: 1; transform: translateX(0); }
+  @keyframes fadeInRow {
+    from { opacity: 0; }
+    to { opacity: 1; }
   }
   @keyframes popIn {
     from { opacity: 0; transform: scale(0.8); }
     to { opacity: 1; transform: scale(1); }
   }
   .animate-row {
-    animation: slideIn 0.3s ease-out forwards;
+    animation: fadeInRow 0.25s ease-out both;
   }
   .hover-scale {
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    transition: box-shadow 0.2s ease;
   }
   .hover-scale:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 15px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
   }
   .btn-bounce:active {
     transform: scale(0.95);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .animate-row, .hover-scale, .btn-bounce {
+      animation: none;
+      transition: none;
+    }
   }
 `;
 
@@ -41,6 +46,7 @@ function Generator() {
   const [selectedMan, setSelectedMan] = useState("");
   const [selectedModel, setSelectedModel] = useState("");
   const [serialNumber, setSerialNumber] = useState("");
+  const [addError, setAddError] = useState(null);
 
   const [deviceQueue, setDeviceQueue] = useState([]);
   const [loadingManufacturers, setLoadingManufacturers] = useState(true);
@@ -61,7 +67,7 @@ function Generator() {
   useEffect(() => {
     const saved = sessionStorage.getItem('deviceQueue');
     if (saved) {
-      try { setDeviceQueue(JSON.parse(saved)); } catch (_) {}
+      try { setDeviceQueue(JSON.parse(saved)); } catch { /* ignore corrupt sessionStorage */ }
     }
   }, []);
 
@@ -72,20 +78,25 @@ function Generator() {
 
   // --- DATA FETCHING ---
   useEffect(() => {
+    const controller = new AbortController();
     setLoadingManufacturers(true);
-    fetch(`${API_URL}/manufacturers`)
+    fetch(`${API_URL}/manufacturers`, { signal: controller.signal })
       .then(res => {
         if (!res.ok) throw new Error("Failed");
         return res.json();
       })
       .then(data => {
         if (Array.isArray(data)) setManufacturers(data);
+        setLoadingManufacturers(false);
       })
-      .catch(() => setBackendError("Backend offline. Is uvicorn running?"))
-      .finally(() => setLoadingManufacturers(false));
+      .catch((err) => {
+        if (err.name === 'AbortError') return;
+        setBackendError("Backend offline. Is uvicorn running?");
+        setLoadingManufacturers(false);
+      });
 
     // Load default manufacturer from saved settings (only if nothing already selected)
-    fetch(`${API_URL}/config`)
+    fetch(`${API_URL}/config`, { signal: controller.signal })
       .then(res => res.ok ? res.json() : null)
       .then(data => {
         if (data && data.default_manufacturer) {
@@ -93,24 +104,29 @@ function Generator() {
         }
       })
       .catch(() => {});
+    return () => controller.abort();
   }, []);
 
   useEffect(() => {
-    if (selectedMan) {
-      setLoadingModels(true);
-      fetch(`${API_URL}/models?manufacturer=${selectedMan}`)
-        .then(res => res.json())
-        .then(data => {
-          setModels(Array.isArray(data) ? data : []);
-          if (selectedModel && Array.isArray(data) && !data.includes(selectedModel)) {
-            setSelectedModel("");
-          }
-          setLoadingModels(false);
-        })
-        .catch(() => setLoadingModels(false));
-    } else {
+    if (!selectedMan) {
       setModels([]);
+      return;
     }
+    const controller = new AbortController();
+    setLoadingModels(true);
+    fetch(`${API_URL}/models?manufacturer=${encodeURIComponent(selectedMan)}`, { signal: controller.signal })
+      .then(res => res.json())
+      .then(data => {
+        setModels(Array.isArray(data) ? data : []);
+        setSelectedModel(current =>
+          current && Array.isArray(data) && !data.includes(current) ? "" : current
+        );
+        setLoadingModels(false);
+      })
+      .catch((err) => {
+        if (err.name !== 'AbortError') setLoadingModels(false);
+      });
+    return () => controller.abort();
   }, [selectedMan]);
 
   // --- VALIDATION ---
@@ -134,13 +150,14 @@ function Generator() {
   // --- ACTIONS ---
   const addDeviceToQueue = () => {
     if (!selectedMan || !selectedModel || !serialNumber) {
-      alert("Please fill in all fields.");
+      setAddError("Please fill in all fields.");
       return;
     }
     if (deviceQueue.some(d => d.serial === serialNumber.toUpperCase().trim())) {
-      alert("This serial number is already in your queue!");
+      setAddError("This serial number is already in your queue!");
       return;
     }
+    setAddError(null);
     const newDevice = {
       manufacturer: selectedMan,
       model: selectedModel,
@@ -186,6 +203,7 @@ function Generator() {
 
   // Step 2: User confirmed — execute the actual push
   const executePush = async () => {
+    if (isPushing) return;
     closeConfirm();
     setIsPushing(true);
     setPushResults([]);
@@ -208,7 +226,7 @@ function Generator() {
       } else {
         setPushResults([{ serial: "System", status: 'error', message: "Invalid response format" }]);
       }
-    } catch (error) {
+    } catch {
       setPushResults([{ serial: "System", status: 'error', message: 'Failed to contact backend.' }]);
     } finally {
       setIsPushing(false);
@@ -240,8 +258,8 @@ function Generator() {
 
           {/* LEFT COLUMN: INPUT FORM */}
           <Grid.Col span={{ base: 12, md: 4 }}>
-            <Paper shadow="sm" p="lg" radius="lg" withBorder h="100%">
-              <Title order={4} mb="md" c="gray.7">Add Device</Title>
+            <Paper shadow="sm" p="lg" radius="lg" withBorder h="100%" className="hover-scale">
+              <Title order={4} mb="md" c="dimmed">Add Device</Title>
 
               <Stack gap="md">
                 <Select
@@ -249,7 +267,7 @@ function Generator() {
                   placeholder={loadingManufacturers ? "Loading..." : "Select Vendor"}
                   data={manufacturers}
                   value={selectedMan}
-                  onChange={setSelectedMan}
+                  onChange={(value) => { setSelectedMan(value); setAddError(null); }}
                   searchable
                   variant="filled"
                   radius="md"
@@ -262,7 +280,7 @@ function Generator() {
                   placeholder={loadingModels ? "Loading..." : "Search Model..."}
                   data={models}
                   value={selectedModel}
-                  onChange={setSelectedModel}
+                  onChange={(value) => { setSelectedModel(value); setAddError(null); }}
                   disabled={!selectedMan || loadingModels}
                   searchable
                   filter={optionsFilter}
@@ -275,10 +293,11 @@ function Generator() {
                   label="Serial Number"
                   placeholder="e.g. 5CD1234..."
                   value={serialNumber}
-                  onChange={(e) => setSerialNumber(e.currentTarget.value)}
+                  onChange={(e) => { setSerialNumber(e.currentTarget.value); setAddError(null); }}
                   error={serialWarning}
                   variant="filled"
                   radius="md"
+                  styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)', textTransform: 'uppercase' } }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') addDeviceToQueue();
                   }}
@@ -297,6 +316,10 @@ function Generator() {
                 >
                   Add to Queue
                 </Button>
+
+                {addError && (
+                  <Text c="red" size="xs">{addError}</Text>
+                )}
 
                 {lastUsed && (
                   <Button
@@ -319,10 +342,10 @@ function Generator() {
 
           {/* RIGHT COLUMN: QUEUE TABLE */}
           <Grid.Col span={{ base: 12, md: 8 }}>
-            <Paper shadow="sm" p="lg" radius="lg" withBorder h="100%">
+            <Paper shadow="sm" p="lg" radius="lg" withBorder h="100%" className="hover-scale">
               <Group justify="space-between" mb="md">
                 <Group gap="xs">
-                  <Title order={4} c="gray.7">Queue</Title>
+                  <Title order={4} c="dimmed">Queue</Title>
                   <Badge
                     circle
                     size="lg"
@@ -374,10 +397,10 @@ function Generator() {
                 <Table striped highlightOnHover verticalSpacing="sm" withRowBorders={false}>
                   <Table.Thead>
                     <Table.Tr>
-                      <Table.Th>Manufacturer</Table.Th>
-                      <Table.Th>Model</Table.Th>
-                      <Table.Th>Serial</Table.Th>
-                      <Table.Th style={{ textAlign: 'right' }}>Action</Table.Th>
+                      <Table.Th fz="xs" tt="uppercase" c="dimmed">Manufacturer</Table.Th>
+                      <Table.Th fz="xs" tt="uppercase" c="dimmed">Model</Table.Th>
+                      <Table.Th fz="xs" tt="uppercase" c="dimmed">Serial</Table.Th>
+                      <Table.Th fz="xs" tt="uppercase" c="dimmed" style={{ textAlign: 'right' }}>Action</Table.Th>
                     </Table.Tr>
                   </Table.Thead>
                   <Table.Tbody>
@@ -392,10 +415,10 @@ function Generator() {
                       </Table.Tr>
                     ) : (
                       deviceQueue.map((device, index) => (
-                        <Table.Tr key={index} className="animate-row" style={{ animationDelay: `${index * 0.05}s` }}>
+                        <Table.Tr key={device.serial} className="animate-row">
                           <Table.Td>{device.manufacturer}</Table.Td>
                           <Table.Td>{device.model}</Table.Td>
-                          <Table.Td style={{ fontFamily: 'monospace', fontWeight: 'bold', color: '#228be6' }}>
+                          <Table.Td fw={700} c="blue.5" style={{ fontFamily: 'var(--mantine-font-family-monospace)' }}>
                             {device.serial}
                           </Table.Td>
                           <Table.Td style={{ textAlign: 'right' }}>
@@ -405,8 +428,9 @@ function Generator() {
                               radius="xl"
                               onClick={() => removeDevice(index)}
                               className="btn-bounce"
+                              aria-label={`Remove device ${device.serial}`}
                             >
-                              ✕
+                              <IconX size={16} />
                             </ActionIcon>
                           </Table.Td>
                         </Table.Tr>
@@ -440,7 +464,7 @@ function Generator() {
           </Text>
           <Group justify="flex-end" mt="md">
             <Button variant="default" radius="md" onClick={closeConfirm}>Cancel</Button>
-            <Button color="blue" radius="md" leftSection={<IconCloudUpload size={16} />} onClick={executePush}>
+            <Button color="blue" radius="md" leftSection={<IconCloudUpload size={16} />} onClick={executePush} loading={isPushing} disabled={isPushing}>
               Confirm Push
             </Button>
           </Group>
@@ -481,8 +505,8 @@ function Generator() {
                 </Table.Thead>
                 <Table.Tbody>
                   {pushResults.map((res, index) => (
-                    <Table.Tr key={index} style={{ animation: 'popIn 0.3s ease-out forwards', animationDelay: `${index * 0.05}s` }}>
-                      <Table.Td fw={600} style={{ fontFamily: 'monospace' }}>{res.serial || "N/A"}</Table.Td>
+                    <Table.Tr key={`${res.serial}-${index}`} style={{ animation: 'popIn 0.3s ease-out both', animationDelay: `${index * 0.05}s` }}>
+                      <Table.Td fw={600} style={{ fontFamily: 'var(--mantine-font-family-monospace)' }}>{res.serial || "N/A"}</Table.Td>
                       <Table.Td>
                         {res.status === 'success' ? (
                           <Badge color="teal" variant="light" leftSection={<IconCheck size={12}/>}>Success</Badge>
@@ -490,7 +514,7 @@ function Generator() {
                           <Badge color="red" variant="light" leftSection={<IconX size={12}/>}>Failed</Badge>
                         )}
                       </Table.Td>
-                      <Table.Td style={{ fontSize: '0.85rem', color: 'gray' }}>
+                      <Table.Td fz="sm" c="dimmed">
                         {res.message}
                       </Table.Td>
                     </Table.Tr>

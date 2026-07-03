@@ -50,7 +50,7 @@ function Settings() {
         if (data.client_secret) setClientSecret(data.client_secret);
         if (data.default_manufacturer) setDefaultManufacturer(data.default_manufacturer);
       })
-      .catch(err => console.log("No config found on server yet."));
+      .catch(() => console.log("No config found on server yet."));
 
     fetch(`${API_URL}/manufacturers`)
       .then(res => res.ok ? res.json() : [])
@@ -81,7 +81,7 @@ function Settings() {
       } else {
         setNotification({ type: 'error', title: 'Connection Failed', message: data.detail || "Check your IDs." });
       }
-    } catch (error) {
+    } catch {
       setNotification({ type: 'error', title: 'Network Error', message: "Could not reach backend server." });
     } finally {
       setLoading(false);
@@ -111,7 +111,7 @@ function Settings() {
             const err = await response.json();
             setNotification({ type: 'error', title: 'Save Failed', message: err.detail || "Unknown error" });
         }
-    } catch (error) {
+    } catch {
         setNotification({ type: 'error', title: 'Error', message: "Could not save to backend." });
     } finally {
         setLoading(false);
