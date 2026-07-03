@@ -1,5 +1,6 @@
 import { BrowserRouter as Router, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
-import { Container, Tabs, Paper, Group, Text, ThemeIcon, Title } from '@mantine/core';
+import { Container, Tabs, Paper, Group, ThemeIcon, Title } from '@mantine/core';
+import { IconDevices } from '@tabler/icons-react';
 import Generator from './pages/Generator';
 import Settings from './pages/Settings';
 
@@ -15,8 +16,8 @@ function AppShell() {
           
           {/* Logo / Title Area */}
           <Group>
-            <ThemeIcon size="lg" variant="gradient" gradient={{ from: 'indigo', to: 'cyan' }}>
-              ID
+            <ThemeIcon size="lg" radius="md" variant="gradient" gradient={{ from: 'indigo', to: 'cyan' }}>
+              <IconDevices size={20} stroke={1.8} />
             </ThemeIcon>
             <Title order={4}>Intune Corporate Device Registration</Title>
           </Group>

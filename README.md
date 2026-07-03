@@ -17,11 +17,11 @@ The app automatically syncs official hardware catalogs from Dell, HP, and Lenovo
 - **Searchable Dropdowns** — Quickly find manufacturers and models with type-ahead search
 - **Serial Number Validation** — Manufacturer-specific format warnings (e.g., Dell 7-char Service Tags, HP 10-char serials)
 - **Batch Queue** — Add multiple devices to a queue before pushing, with CSV export and one-click clear
-- **Intune Integration** — Bulk-imports devices to Intune via the Microsoft Graph API with per-device status reporting
+- **Intune Integration** — Bulk-imports devices to Intune via the Microsoft Graph API with per-device status reporting; large queues are pushed in batches of 500 so one failed batch doesn't fail the rest
 - **Quick Load** — Recalls your last-used manufacturer/model for fast repeat entries
 - **Default Manufacturer** — Pre-select a manufacturer in Settings to skip a click for fleets dominated by one vendor
 - **Dark Mode** — Ships with dark theme by default, with a light mode toggle
-- **Secure by Design** — Backend is not exposed to the host network; only Nginx is externally accessible
+- **Secure by Design** — Backend is not exposed to the host network; only Nginx is externally accessible. API errors return generic messages to the browser while full details stay in the server logs
 
 ---
 
@@ -49,7 +49,7 @@ The app automatically syncs official hardware catalogs from Dell, HP, and Lenovo
 | Component | Technology | Role |
 |-----------|-----------|------|
 | Frontend | React 19 + Vite, Mantine UI | Device queue UI, settings page |
-| Reverse Proxy | Nginx (Alpine) | Serves static files, proxies `/api/*` to backend |
+| Reverse Proxy | Nginx (Alpine) | Serves static files (gzip, immutable caching for hashed assets), proxies `/api/*` to backend |
 | Backend | Python 3.12, FastAPI, Uvicorn | REST API, catalog sync, Intune integration |
 | Database | SQLite (WAL mode) | Stores device model catalog and Azure credentials |
 | Scheduler | APScheduler | Daily automatic catalog refresh |
@@ -82,7 +82,7 @@ The app will be available at `http://<server-ip>:8090` once startup completes.
 5. Reference: `refs/heads/main`
 6. Click **Deploy the stack**
 
-> **Note:** On first launch, the backend downloads manufacturer catalogs (~100 MB). This takes 2-3 minutes. The frontend will show a 502 error until the backend healthcheck passes — this is expected.
+> **Note:** On first launch, the backend downloads the manufacturer catalogs before it reports healthy. The three vendor downloads run in parallel, so this usually completes in well under a minute, but the healthcheck allows up to 5 minutes for slow networks. The frontend will show a 502 error until the backend healthcheck passes — this is expected.
 
 ---
 
@@ -153,7 +153,7 @@ All endpoints are served under `/api` via the Nginx reverse proxy.
 | `POST` | `/test-azure-connection` | Test Azure credentials without saving |
 | `GET` | `/manufacturers` | List all manufacturers in the catalog |
 | `GET` | `/models?manufacturer=<name>` | List models for a given manufacturer |
-| `POST` | `/push-to-intune` | Bulk-register devices in Intune |
+| `POST` | `/push-to-intune` | Bulk-register devices in Intune (batched in chunks of 500; Graph tokens are cached for ~1h) |
 
 ### Push to Intune — Request
 
@@ -219,6 +219,7 @@ The backend automatically syncs device models from three manufacturers:
 | **Dell** | CatalogPC.cab | CAB → XML (streamed) | Every 24 hours |
 
 - On first startup, if the database is empty, all catalogs are downloaded immediately
+- The three vendor downloads run in parallel, and models are bulk-inserted in a single transaction
 - Dell's catalog (~100 MB) is parsed with iterative XML parsing to keep memory usage low
 - HP syncs from two sources (HPIA platform list + DriverPack catalog) and merges them for broader model coverage
 - HP and Dell CAB files are extracted using `cabextract` (Linux) or `extrac32` (Windows)
@@ -233,7 +234,7 @@ All data lives in a single SQLite database at `/app/data/catalogue.db`, persiste
 | Table | Purpose |
 |-------|---------|
 | `models` | Device model catalog (manufacturer + model_name, unique) |
-| `settings` | Azure credentials (tenant_id, client_id, client_secret) |
+| `settings` | Azure credentials (tenant_id, client_id, client_secret) and app preferences (default_manufacturer) |
 
 **Backup:** Back up the `app_data` Docker volume to preserve both the model cache and Azure credentials across redeployments.
 
@@ -245,7 +246,7 @@ All data lives in a single SQLite database at `/app/data/catalogue.db`, persiste
 
 ### "502 Bad Gateway" on startup
 
-The backend is downloading manufacturer catalogs for the first time (~100 MB). The Docker Compose healthcheck has a 300-second start period to allow for this. Wait 2-3 minutes.
+The backend is downloading manufacturer catalogs for the first time. This usually finishes in under a minute (downloads run in parallel), and the Docker Compose healthcheck allows up to 300 seconds for slow connections.
 
 ### Frontend loads but API calls fail
 

@@ -31,6 +31,12 @@ const customStyles = `
   .btn-bounce:active {
     transform: scale(0.95);
   }
+  @media (prefers-reduced-motion: reduce) {
+    .animate-row, .hover-scale, .btn-bounce {
+      animation: none;
+      transition: none;
+    }
+  }
 `;
 
 function Generator() {
@@ -253,8 +259,8 @@ function Generator() {
 
           {/* LEFT COLUMN: INPUT FORM */}
           <Grid.Col span={{ base: 12, md: 4 }}>
-            <Paper shadow="sm" p="lg" radius="lg" withBorder h="100%">
-              <Title order={4} mb="md" c="gray.7">Add Device</Title>
+            <Paper shadow="sm" p="lg" radius="lg" withBorder h="100%" className="hover-scale">
+              <Title order={4} mb="md" c="dimmed">Add Device</Title>
 
               <Stack gap="md">
                 <Select
@@ -292,6 +298,7 @@ function Generator() {
                   error={serialWarning}
                   variant="filled"
                   radius="md"
+                  styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)', textTransform: 'uppercase' } }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') addDeviceToQueue();
                   }}
@@ -336,10 +343,10 @@ function Generator() {
 
           {/* RIGHT COLUMN: QUEUE TABLE */}
           <Grid.Col span={{ base: 12, md: 8 }}>
-            <Paper shadow="sm" p="lg" radius="lg" withBorder h="100%">
+            <Paper shadow="sm" p="lg" radius="lg" withBorder h="100%" className="hover-scale">
               <Group justify="space-between" mb="md">
                 <Group gap="xs">
-                  <Title order={4} c="gray.7">Queue</Title>
+                  <Title order={4} c="dimmed">Queue</Title>
                   <Badge
                     circle
                     size="lg"
@@ -391,10 +398,10 @@ function Generator() {
                 <Table striped highlightOnHover verticalSpacing="sm" withRowBorders={false}>
                   <Table.Thead>
                     <Table.Tr>
-                      <Table.Th>Manufacturer</Table.Th>
-                      <Table.Th>Model</Table.Th>
-                      <Table.Th>Serial</Table.Th>
-                      <Table.Th style={{ textAlign: 'right' }}>Action</Table.Th>
+                      <Table.Th fz="xs" tt="uppercase" c="dimmed">Manufacturer</Table.Th>
+                      <Table.Th fz="xs" tt="uppercase" c="dimmed">Model</Table.Th>
+                      <Table.Th fz="xs" tt="uppercase" c="dimmed">Serial</Table.Th>
+                      <Table.Th fz="xs" tt="uppercase" c="dimmed" style={{ textAlign: 'right' }}>Action</Table.Th>
                     </Table.Tr>
                   </Table.Thead>
                   <Table.Tbody>
@@ -412,7 +419,7 @@ function Generator() {
                         <Table.Tr key={device.serial} className="animate-row" style={{ animationDelay: `${index * 0.05}s` }}>
                           <Table.Td>{device.manufacturer}</Table.Td>
                           <Table.Td>{device.model}</Table.Td>
-                          <Table.Td style={{ fontFamily: 'monospace', fontWeight: 'bold', color: '#228be6' }}>
+                          <Table.Td fw={700} c="blue.5" style={{ fontFamily: 'var(--mantine-font-family-monospace)' }}>
                             {device.serial}
                           </Table.Td>
                           <Table.Td style={{ textAlign: 'right' }}>
@@ -422,8 +429,9 @@ function Generator() {
                               radius="xl"
                               onClick={() => removeDevice(index)}
                               className="btn-bounce"
+                              aria-label={`Remove device ${device.serial}`}
                             >
-                              ✕
+                              <IconX size={16} />
                             </ActionIcon>
                           </Table.Td>
                         </Table.Tr>
@@ -499,7 +507,7 @@ function Generator() {
                 <Table.Tbody>
                   {pushResults.map((res, index) => (
                     <Table.Tr key={`${res.serial}-${index}`} style={{ animation: 'popIn 0.3s ease-out forwards', animationDelay: `${index * 0.05}s` }}>
-                      <Table.Td fw={600} style={{ fontFamily: 'monospace' }}>{res.serial || "N/A"}</Table.Td>
+                      <Table.Td fw={600} style={{ fontFamily: 'var(--mantine-font-family-monospace)' }}>{res.serial || "N/A"}</Table.Td>
                       <Table.Td>
                         {res.status === 'success' ? (
                           <Badge color="teal" variant="light" leftSection={<IconCheck size={12}/>}>Success</Badge>
@@ -507,7 +515,7 @@ function Generator() {
                           <Badge color="red" variant="light" leftSection={<IconX size={12}/>}>Failed</Badge>
                         )}
                       </Table.Td>
-                      <Table.Td style={{ fontSize: '0.85rem', color: 'gray' }}>
+                      <Table.Td fz="sm" c="dimmed">
                         {res.message}
                       </Table.Td>
                     </Table.Tr>
